@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port ${API_PORT:-8000}
+    env_file: .env
+    depends_on:
+      - db
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./api:/app/api
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: python main.py
+    env_file: .env
+    depends_on:
+      - db
+    volumes:
+      - ./worker:/app/worker
+
+  log-ui:
+    build:
+      context: .
+      dockerfile: log_ui/Dockerfile
+    command: python app.py
+    env_file: .env
+    depends_on:
+      - db
+    ports:
+      - "${LOG_UI_PORT:-8080}:8080"
+    volumes:
+      - ./log_ui:/app/log_ui
+
+volumes:
+  db_data:
