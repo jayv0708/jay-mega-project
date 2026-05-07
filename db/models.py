@@ -24,7 +24,7 @@ class Job(Base):
     query: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     events = relationship("AgentEvent", back_populates="job", cascade="all, delete-orphan")
     tool_calls = relationship("ToolCall", back_populates="job", cascade="all, delete-orphan")
@@ -117,7 +117,7 @@ class PromptRewrite(Base):
     dimension: Mapped[str] = mapped_column(String(128), nullable=False)
     justification: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     approvals = relationship("RewriteApproval", back_populates="prompt_rewrite", cascade="all, delete-orphan")
 
