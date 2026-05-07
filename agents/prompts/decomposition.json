@@ -1,0 +1,6 @@
+{
+  "version": "1.0",
+  "description": "Prompt template for decomposition into typed subtasks.",
+  "instructions": "Create subtasks with ids, type, description, and dependencies. Do not return confusion to the user; resolve underspecified details internally.",
+  "examples": []
+}

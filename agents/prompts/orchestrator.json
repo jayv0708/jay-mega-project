@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "description": "Structured orchestration prompt configuration.",
+  "instructions": "Decide which agents to run and return JSON with agents, execution_order, and justification.",
+  "example_schema": {
+    "agents": [{"agent_id": "DecompositionAgent", "reason": "break query into tasks", "budget": 1024}],
+    "execution_order": ["DecompositionAgent", "RAGAgent", "CritiqueAgent", "SynthesisAgent"],
+    "justification": "The query needs decomposition, retrieval, critique, and synthesis."
+  }
+}

@@ -1,48 +1,65 @@
-# Jay Mega Project
+# Real-Time Multi-Agent LLM Orchestration and Evaluation System
 
-## Phase 1 — Repo & Docker Scaffold
+## Overview
 
-This repository contains a monorepo scaffold for a FastAPI-based API, an async worker, PostgreSQL database, and a lightweight log UI.
+This repository is a monorepo scaffold for a production-style LLM orchestration system using:
+- Python 3.12
+- FastAPI
+- asyncio
+- PostgreSQL
+- SQLAlchemy + Alembic
+- Docker Compose
+- Server-Sent Events (SSE)
 
-### Getting started
+The project is organized for clear separation of concerns:
+- `/api` — FastAPI application
+- `/worker` — background job processor
+- `/agents` — agent classes and prompt definitions
+- `/tools` — runtime tool implementations
+- `/eval` — evaluation harness and case fixtures
+- `/db` — Alembic migrations and SQLAlchemy models
+- `/log-ui` — lightweight log query interface
 
-1. Install Docker Desktop and make sure Docker is running.
-2. From the repository root, run:
+## One-command setup
+
+Copy `.env.example` to `.env`, then start all services:
 
 ```bash
+cp .env.example .env && docker compose up --build
+```
+
+On Windows PowerShell:
+
+```powershell
+copy .env.example .env
 docker compose up --build
 ```
 
-3. Verify services:
+## Services
 
-- API: http://localhost:8000/
-- Log UI: http://localhost:8080/
-- PostgreSQL: port 5432
+- `api`: FastAPI app exposed on port `8000`
+- `worker`: asynchronous background processor
+- `db`: PostgreSQL 15 database
+- `log-ui`: lightweight log/query UI exposed on port `8080`
 
-### What is included
+## Current scaffold
 
-- `docker-compose.yml` with four services: `api`, `worker`, `db`, `log-ui`
-- `.env` for environment configuration
-- `pyproject.toml` and `requirements.txt` with pinned versions
-- Basic runnable skeletons for every service
-- `alembic/` migration scaffold and initial schema metadata in `app/models.py`
+- `docker-compose.yml` with API, worker, db, and log-ui services
+- `.env.example` with all runtime configuration variables
+- `pyproject.toml` and `requirements.txt` with pinned dependencies
+- `/agents` and `/tools` packages for future agent/tool logic
+- `/db` package with Alembic migrations and SQLAlchemy models
+- `/eval/cases` placeholder directory for evaluation fixtures
+- `COLLABORATIONS.md` for documenting AI-assisted decisions
 
-### Phase 2 setup
+## Next steps
 
-After starting the database, run:
+This initial scaffold completes Step 1. The next work will implement:
+1. database schema and migrations
+2. shared context object and budget manager
+3. agent orchestration and SSE streaming
+4. tool execution logging and evaluation pipeline
 
-```bash
-export ALEMBIC_DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/appdb
-alembic upgrade head
-```
+## Notes
 
-On Windows PowerShell use:
-
-```powershell
-$env:ALEMBIC_DATABASE_URL = 'postgresql+psycopg://postgres:postgres@db:5432/appdb'
-alembic upgrade head
-```
-
-### Notes
-
-The current scaffold is a minimal starting point for Phase 2 and later work.
+This repository is intentionally structured for incremental delivery and stepwise completion of the full orchestration system.
