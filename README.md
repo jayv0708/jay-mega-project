@@ -25,6 +25,23 @@ docker compose up --build
 - `.env` for environment configuration
 - `pyproject.toml` and `requirements.txt` with pinned versions
 - Basic runnable skeletons for every service
+- `alembic/` migration scaffold and initial schema metadata in `app/models.py`
+
+### Phase 2 setup
+
+After starting the database, run:
+
+```bash
+export ALEMBIC_DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/appdb
+alembic upgrade head
+```
+
+On Windows PowerShell use:
+
+```powershell
+$env:ALEMBIC_DATABASE_URL = 'postgresql+psycopg://postgres:postgres@db:5432/appdb'
+alembic upgrade head
+```
 
 ### Notes
 
