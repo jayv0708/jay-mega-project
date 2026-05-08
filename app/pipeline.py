@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from typing import AsyncIterator
 from uuid import UUID
 
-from app.context import ContextBudgetManager, SharedContext
+from app.context import ContextBudgetExceeded, ContextBudgetManager, SharedContext
+
 from app.events import EventLogger, SSEEvent
 from agents.standard_agents import CritiqueAgent, DecompositionAgent, OrchestratorAgent, RAGAgent, SynthesisAgent
 from retrieval.retrieval import RetrievalService
@@ -75,9 +76,33 @@ class DAGExecutor:
                         fallback_text=fallback_texts.get(agent_id, f"{agent_id} processing complete.")
                     )
                     await broker.complete_step(step.id, context.model_dump(mode="json"))
+                except ContextBudgetExceeded as cbe:
+                    # Emit POLICY_VIOLATION SSE immediately (not silently truncated)
+                    violation_details = {}
+                    if context.policy_violations:
+                        v = context.policy_violations[-1]
+                        violation_details = v.details
+                    pv_event = SSEEvent(
+                        event_type="POLICY_VIOLATION",
+                        agent_id=agent_id,
+                        data={
+                            "agent_id": agent_id,
+                            "violation_type": "context_budget_exceeded",
+                            "declared_budget": violation_details.get("declared_budget", 0),
+                            "actual_tokens": violation_details.get("actual_tokens", 0),
+                            "overflow": violation_details.get("overflow", 0),
+                            "message": str(cbe),
+                        },
+                        budget_remaining=budget_manager.check_remaining("shared"),
+                    )
+                    await self.event_logger.log_sse_event(UUID(self.job_id), pv_event)
+                    await broker.fail_step(step.id, str(cbe))
+                    # Orchestrator decides: mark step failed, continue pipeline
+                    continue
                 except Exception as e:
                     await broker.fail_step(step.id, str(e))
                     raise
+
 
             # Emit any policy violations accumulated during execution
             for violation in context.policy_violations:

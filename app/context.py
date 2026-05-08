@@ -268,10 +268,18 @@ class ContextBudgetManager:
         shared = self.shared_context.get_agent_budget_state("shared")
         if requested_tokens <= min(state.remaining_tokens, shared.remaining_tokens):
             return
+        declared_budget = self.per_agent_limits.get(agent_id, self.total_tokens)
+        actual_tokens = declared_budget - remaining_tokens + requested_tokens
+        overflow = actual_tokens - declared_budget
         violation = PolicyViolation(
-            violation_type="CONTEXT_BUDGET_EXCEEDED",
-            message=f"Agent '{agent_id}' attempted to add context beyond its budget.",
+            violation_type="context_budget_exceeded",
+            message=f"Agent '{agent_id}' attempted to add context beyond its declared budget.",
             details={
+                "agent_id": agent_id,
+                "violation_type": "context_budget_exceeded",
+                "declared_budget": declared_budget,
+                "actual_tokens": actual_tokens,
+                "overflow": max(0, overflow),
                 "requested_tokens": requested_tokens,
                 "remaining_tokens_before_compression": remaining_tokens,
                 "remaining_tokens_after_compression": min(state.remaining_tokens, shared.remaining_tokens),
@@ -279,6 +287,7 @@ class ContextBudgetManager:
         )
         self.shared_context.add_policy_violation(violation, persist=True, db_session=self.db_session)
         raise ContextBudgetExceeded(violation.message)
+
 
     def compress_context(self, triggering_agent_id: str) -> SharedContext:
         """Lossless for structured fields, lossy only for narrative agent outputs."""
