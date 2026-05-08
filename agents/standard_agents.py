@@ -20,28 +20,51 @@ class OrchestratorAgent(BaseAgent):
     async def execute(self, context: SharedContext) -> SharedContext:
         prompt = load_prompt_json("orchestrator")
         fallback = {
-            "agents": [
-                {"agent_id": "decomposition", "reason": "Plan subtasks for the query.", "budget": 1200},
-                {"agent_id": "rag", "reason": "Retrieve and cite supporting evidence.", "budget": 2400},
-                {"agent_id": "critique", "reason": "Review claims and identify weak spans.", "budget": 1600},
-                {"agent_id": "synthesis", "reason": "Merge evidence and produce the final answer.", "budget": 1800},
+            "subtasks": [
+                {"id": "task_decomposition", "description": "Plan subtasks for the query.", "dependencies": []},
+                {"id": "task_rag", "description": "Retrieve and cite supporting evidence.", "dependencies": ["task_decomposition"]},
+                {"id": "task_critique", "description": "Review claims and identify weak spans.", "dependencies": ["task_rag"]},
+                {"id": "task_synthesis", "description": "Merge evidence and produce the final answer.", "dependencies": ["task_critique"]}
             ],
-            "execution_order": ["decomposition", "rag", "critique", "synthesis"],
-            "justification": "Default deterministic route covers planning, retrieval, critique, and synthesis.",
+            "dependencies": [],
+            "selected_agents": ["decomposition", "rag", "critique", "synthesis"],
+            "required_tools": ["web_search", "code_sandbox"],
+            "estimated_tokens": 1000,
+            "estimated_cost": 0.05,
+            "confidence": 0.9,
+            "routing_justification": "Default deterministic route covers planning, retrieval, critique, and synthesis.",
+            "rejected_alternatives": ["skip_rag"]
         }
+        
+        system_prompt = prompt.get("system", "")
+        system_prompt += (
+            "\n\nYou MUST return a JSON object with the following schema:\n"
+            "{\n"
+            '  "subtasks": [{"id": str, "description": str, "dependencies": list[str]}],\n'
+            '  "dependencies": list[dict],\n'
+            '  "selected_agents": list[str],\n'
+            '  "required_tools": list[str],\n'
+            '  "estimated_tokens": int,\n'
+            '  "estimated_cost": float,\n'
+            '  "confidence": float,\n'
+            '  "routing_justification": str,\n'
+            '  "rejected_alternatives": list[str]\n'
+            "}"
+        )
+
         decision = await self.llm.complete_json(
-            prompt.get("system", ""),
+            system_prompt,
             f"Query: {context.query}",
             temperature=0.0,
             max_tokens=800,
             fallback=fallback,
         )
-        self.consume_budget(80)
+        self.consume_budget(100)
         context.metadata["routing_decision"] = decision
         context.add_agent_output(
             AgentOutput(
                 agent_id=self.agent_id,
-                output=decision["justification"],
+                output=decision.get("routing_justification", "Routing complete."),
                 metadata={"routing_decision": decision},
             )
         )

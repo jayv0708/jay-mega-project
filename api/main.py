@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
+import uuid
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -15,19 +17,15 @@ from db.models import Job, JobStatus
 from eval.meta_loop import decide_rewrite, get_rewrite, load_rewrites
 from eval.runner import latest_run, run_all_cases, run_all_cases_async
 
-
 app = FastAPI(title="Real-Time Multi-Agent LLM Orchestration System", version="0.6.0")
 event_logger = EventLogger()
-
 
 class QueryRequest(BaseModel):
     query: str
 
-
 class RewriteDecisionRequest(BaseModel):
     decision: str
     notes: str = ""
-
 
 def error_response(error_code: str, message: str, job_id: str | None = None, status_code: int = 400) -> JSONResponse:
     return JSONResponse(
@@ -40,10 +38,8 @@ def error_response(error_code: str, message: str, job_id: str | None = None, sta
         },
     )
 
-
 @app.post("/query")
-async def query(request: QueryRequest, background_tasks: BackgroundTasks):
-    import uuid
+async def query(request: QueryRequest):
     if not request.query.strip():
         return error_response("EMPTY_QUERY", "Query must not be empty.")
 
@@ -55,16 +51,12 @@ async def query(request: QueryRequest, background_tasks: BackgroundTasks):
         await session.commit()
 
     executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
-    background_tasks.add_task(executor.execute_dag, request.query)
+    
+    # Run DAG execution concurrently
+    task = asyncio.create_task(executor.execute_dag(request.query))
 
-    return {"job_id": job_id, "status": "pending", "stream_url": f"/jobs/{job_id}/stream"}
-
-
-@app.get("/jobs/{job_id}/stream")
-async def job_stream(job_id: str):
     async def event_stream():
         last_index = 0
-        import asyncio
         while True:
             events = event_logger.memory_events_by_job.get(job_id, [])
             for event in events[last_index:]:
@@ -73,10 +65,14 @@ async def job_stream(job_id: str):
             
             if events and events[-1].event_type == "JOB_COMPLETE":
                 break
+            
+            if task.done() and last_index == len(events):
+                # Ensure we break if task finishes but missed JOB_COMPLETE
+                break
+
             await asyncio.sleep(0.5)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
-
 
 @app.get("/jobs/{job_id}/trace")
 async def get_trace(job_id: UUID) -> dict[str, Any]:
@@ -86,7 +82,6 @@ async def get_trace(job_id: UUID) -> dict[str, Any]:
     ]
     db_trace = await _load_db_trace(job_id)
     return {"job_id": str(job_id), "trace": db_trace or memory_trace}
-
 
 @app.get("/evals/latest")
 async def get_latest_eval() -> dict[str, Any]:
@@ -99,7 +94,6 @@ async def get_latest_eval() -> dict[str, Any]:
         "by_dimension": summary["by_dimension"],
     }
 
-
 @app.post("/rewrites/{rewrite_id}/decision")
 async def post_rewrite_decision(rewrite_id: str, request: RewriteDecisionRequest):
     try:
@@ -110,7 +104,6 @@ async def post_rewrite_decision(rewrite_id: str, request: RewriteDecisionRequest
     except ValueError as exc:
         return error_response("INVALID_REWRITE_DECISION", str(exc), status_code=400)
 
-
 @app.post("/evals/rerun-failures")
 async def rerun_failures() -> dict[str, Any]:
     run = latest_run() or run_all_cases()
@@ -120,7 +113,6 @@ async def rerun_failures() -> dict[str, Any]:
         "rerun_case_count": rerun["total_cases"],
         "summary": rerun["summary"],
     }
-
 
 async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
     try:
@@ -164,7 +156,6 @@ async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
         return sorted(trace, key=lambda item: item["timestamp"])
     except Exception:
         return []
-
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_, exc: HTTPException):

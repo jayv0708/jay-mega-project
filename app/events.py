@@ -1,3 +1,5 @@
+"""Event logger with OpenTelemetry distributed tracing and structured JSON logging."""
+
 from __future__ import annotations
 
 import hashlib
@@ -7,7 +9,17 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+from opentelemetry import trace
+import structlog
 
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ]
+)
+logger = structlog.get_logger()
+tracer = trace.get_tracer(__name__)
 
 SSE_EVENT_TYPES = {
     "TOKEN",
@@ -19,22 +31,21 @@ SSE_EVENT_TYPES = {
     "JOB_COMPLETE",
 }
 
-
 class SSEEvent(BaseModel):
     event_type: str
     agent_id: str
     data: Any
     budget_remaining: int
+    trace_id: str | None = None
+    span_id: str | None = None
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def encode(self) -> str:
         return f"data: {self.model_dump_json()}\n\n"
 
-
 def stable_hash(payload: Any) -> str:
     encoded = json.dumps(payload, default=str, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
 
 class EventLogger:
     def __init__(self, session_factory=None) -> None:
@@ -43,8 +54,26 @@ class EventLogger:
         self.memory_events_by_job: dict[str, list[SSEEvent]] = {}
 
     async def log_sse_event(self, job_id: UUID, event: SSEEvent, *, latency_ms: int | None = None) -> None:
+        current_span = trace.get_current_span()
+        if current_span.is_recording():
+            ctx = current_span.get_span_context()
+            event.trace_id = format(ctx.trace_id, "032x")
+            event.span_id = format(ctx.span_id, "016x")
+
+        # Emit structured log
+        logger.info(
+            "agent_event",
+            job_id=str(job_id),
+            event_type=event.event_type,
+            agent_id=event.agent_id,
+            trace_id=event.trace_id,
+            span_id=event.span_id,
+            latency_ms=latency_ms
+        )
+
         self.memory_events.append(event)
         self.memory_events_by_job.setdefault(str(job_id), []).append(event)
+        
         if self.session_factory is None:
             return
         try:

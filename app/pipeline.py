@@ -49,7 +49,7 @@ class DAGExecutor:
 
             # Extract routing
             routing = context.metadata.get("routing_decision", {})
-            execution_order = routing.get("execution_order", ["decomposition", "rag", "critique", "synthesis"])
+            execution_order = routing.get("selected_agents", ["decomposition", "rag", "critique", "synthesis"])
 
             # Enqueue remaining steps according to DAG
             for agent_id in execution_order:
