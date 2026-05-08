@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   db:
     image: postgres:15-alpine
@@ -37,7 +35,7 @@ services:
   log-ui:
     build:
       context: .
-      dockerfile: log_ui/Dockerfile
+      dockerfile: log-ui/Dockerfile
     command: python app.py
     env_file: .env
     depends_on:
@@ -45,7 +43,7 @@ services:
     ports:
       - "${LOG_UI_PORT:-8080}:8080"
     volumes:
-      - ./log_ui:/app/log_ui
+      - ./log-ui:/app/log-ui
 
 volumes:
   db_data:

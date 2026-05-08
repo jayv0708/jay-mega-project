@@ -12,27 +12,27 @@ This repository is a monorepo scaffold for a production-style LLM orchestration 
 - Server-Sent Events (SSE)
 
 The project is organized for clear separation of concerns:
-- `/api` — FastAPI application
-- `/worker` — background job processor
-- `/agents` — agent classes and prompt definitions
-- `/tools` — runtime tool implementations
-- `/eval` — evaluation harness and case fixtures
-- `/db` — Alembic migrations and SQLAlchemy models
-- `/log-ui` — lightweight log query interface
+- `/api` - FastAPI application
+- `/worker` - background job processor
+- `/agents` - agent classes and prompt definitions
+- `/tools` - runtime tool implementations
+- `/eval` - evaluation harness and case fixtures
+- `/db` - Alembic migrations and SQLAlchemy models
+- `/log-ui` - lightweight log query interface
 
 ## One-command setup
 
 Copy `.env.example` to `.env`, then start all services:
 
 ```bash
-cp .env.example .env && docker compose up --build
+cp .env.example .env && docker compose up
 ```
 
 On Windows PowerShell:
 
 ```powershell
 copy .env.example .env
-docker compose up --build
+docker compose up
 ```
 
 ## Services
@@ -52,13 +52,9 @@ docker compose up --build
 - `/eval/cases` placeholder directory for evaluation fixtures
 - `COLLABORATIONS.md` for documenting AI-assisted decisions
 
-## Next steps
+## Step Status
 
-This initial scaffold completes Step 1. The next work will implement:
-1. database schema and migrations
-2. shared context object and budget manager
-3. agent orchestration and SSE streaming
-4. tool execution logging and evaluation pipeline
+Step 1 is complete. The next step is the database schema and Alembic migrations.
 
 ## Notes
 
