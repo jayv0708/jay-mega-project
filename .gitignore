@@ -10,3 +10,4 @@ db_data/
 .env
 eval/latest_eval.json
 eval/prompt_rewrites.json
+.pytest_cache/

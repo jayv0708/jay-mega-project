@@ -262,3 +262,12 @@ alembic upgrade head
 ```
 
 AI-assisted engineering decisions documented in `COLLABORATIONS.md`.
+
+---
+
+## Architecture Decisions
+
+See [`docs/architecture_critique.md`](docs/architecture_critique.md) for an honest architectural assessment, known tradeoffs, and design rationale.
+
+See [`docs/implementation_plan.md`](docs/implementation_plan.md) for the full implementation plan covering all 10 spec sections.
+
