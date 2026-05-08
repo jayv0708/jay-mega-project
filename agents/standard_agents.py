@@ -322,30 +322,44 @@ class SynthesisAgent(BaseAgent):
             contradiction.justification = "Final answer keeps only claims with citations or explicit caveats."
             resolution_records.append(contradiction.model_dump())
 
+        # Build final sentences from citations, falling back to agent outputs
         cited_sentences = [citation.sentence for citation in context.citations if citation.sentence]
         if not cited_sentences:
             cited_sentences = [output.output for key, output in context.agent_outputs.items() if key != self.agent_id]
         final_sentences = cited_sentences[:4] or ["No supported answer could be produced."]
-        provenance_map = []
-        for index, sentence in enumerate(final_sentences, start=1):
-            citation = next((item for item in context.citations if item.sentence == sentence), None)
+
+        # Build spec-compliant provenance_map:
+        # [{"sentence_index": 0, "text": "...", "source_agent": "rag", "chunk_id": "chunk_42"}, ...]
+        provenance_map: list[dict[str, Any]] = []
+        for index, sentence in enumerate(final_sentences):
+            citation = next((c for c in context.citations if c.sentence == sentence), None)
             provenance_map.append(
                 {
-                    "sentence_id": f"s{index}",
-                    "source_agent_id": citation.agent_id if citation else "synthesis",
-                    "source_chunk_id": citation.chunk_id if citation else None,
+                    "sentence_index": index,
+                    "text": sentence,
+                    "source_agent": citation.agent_id if citation else self.agent_id,
+                    "chunk_id": citation.chunk_id if citation else None,
                 }
             )
+
         final_answer = " ".join(final_sentences)
-        self.check_can_add({"final_answer": final_answer, "provenance_map": provenance_map})
+
+        # Confidence score: mean of citation confidence scores, else default
+        confidence_scores = [c.confidence for c in context.citations if c.confidence is not None]
+        confidence = round(sum(confidence_scores) / len(confidence_scores), 4) if confidence_scores else 0.75
+
+        output_payload = {
+            "final_answer": final_answer,
+            "provenance_map": provenance_map,
+            "contradictions_resolved": resolution_records,
+            "confidence": confidence,
+        }
+        self.check_can_add(output_payload)
         context.add_agent_output(
             AgentOutput(
                 agent_id=self.agent_id,
                 output=final_answer,
-                metadata={
-                    "provenance_map": provenance_map,
-                    "contradiction_resolutions": resolution_records,
-                },
+                metadata=output_payload,
             )
         )
         self.consume_budget(100)
