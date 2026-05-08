@@ -167,6 +167,8 @@ All errors return:
 | Non-root execution | Container runs as UID 1000 |
 | Query parameterisation | All SQL uses `$1` placeholders — no string concatenation |
 | Audit logging | Every blocked request is logged with `structlog` JSON |
+| Docker socket scoping | Only the worker service mounts /var/run/docker.sock; the API has no container access |
+
 
 Adversarial tests are in `tests/test_security.py`.
 

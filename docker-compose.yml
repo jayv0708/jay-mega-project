@@ -7,6 +7,10 @@ services:
       - db_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   api:
     build:
@@ -20,7 +24,12 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - ./api:/app/api
-      - /var/run/docker.sock:/var/run/docker.sock
+    # The API service does NOT mount docker.sock — it has no need for container access
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
 
   worker:
     build:
@@ -32,7 +41,13 @@ services:
       - db
     volumes:
       - ./worker:/app/worker
+      # Required: worker spawns isolated sandbox containers via docker-py for CodeSandboxTool
       - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '2.0'
 
   log-ui:
     build:
@@ -46,6 +61,11 @@ services:
       - "${LOG_UI_PORT:-8080}:8080"
     volumes:
       - ./log-ui:/app/log-ui
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.5'
 
 volumes:
   db_data:

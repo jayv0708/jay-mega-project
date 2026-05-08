@@ -6,6 +6,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY log-ui ./log-ui
 COPY db ./db
 COPY alembic.ini ./alembic.ini
+RUN useradd -m -u 1000 appuser && chown -R appuser /app
+USER 1000
 WORKDIR /app/log-ui
 EXPOSE 8080
 CMD ["python", "app.py"]
