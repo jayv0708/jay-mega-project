@@ -110,6 +110,10 @@ async def run_all_cases_async(cases_directory: Path = CASES_DIR, only_failed_fro
     summary = summarize_results(results)
     run = {"run_id": str(uuid4()), "total_cases": len(results), "summary": summary, "cases": results}
     LATEST_EVAL_PATH.write_text(json.dumps(run, indent=2), encoding="utf-8")
+    if only_failed_from is None:
+        from eval.meta_loop import propose_rewrite
+
+        propose_rewrite(run)
     return run
 
 
