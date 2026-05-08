@@ -14,18 +14,21 @@ from app.events import EventLogger
 from app.pipeline import DAGExecutor
 from db.db import get_async_session
 from db.models import Job, JobStatus
-from eval.meta_loop import decide_rewrite, get_rewrite, load_rewrites
+from eval.meta_loop import decide_rewrite, get_rewrite, list_rewrites_from_db, load_rewrites
 from eval.runner import latest_run, run_all_cases, run_all_cases_async
 
-app = FastAPI(title="Real-Time Multi-Agent LLM Orchestration System", version="0.6.0")
+app = FastAPI(title="Real-Time Multi-Agent LLM Orchestration System", version="0.7.0")
 event_logger = EventLogger()
+
 
 class QueryRequest(BaseModel):
     query: str
 
+
 class RewriteDecisionRequest(BaseModel):
-    decision: str
-    notes: str = ""
+    decision: str          # "approved" | "rejected"
+    decided_by: str = ""   # who is approving/rejecting
+
 
 def error_response(error_code: str, message: str, job_id: str | None = None, status_code: int = 400) -> JSONResponse:
     return JSONResponse(
@@ -38,21 +41,21 @@ def error_response(error_code: str, message: str, job_id: str | None = None, sta
         },
     )
 
+
+# ── Endpoint 1 ───────────────────────────────────────────────────
 @app.post("/query")
 async def query(request: QueryRequest):
     if not request.query.strip():
         return error_response("EMPTY_QUERY", "Query must not be empty.")
 
     job_id = str(uuid.uuid4())
-    
+
     async with get_async_session() as session:
         job = Job(id=job_id, query=request.query, status=JobStatus.pending)
         session.add(job)
         await session.commit()
 
     executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
-    
-    # Run DAG execution concurrently
     task = asyncio.create_task(executor.execute_dag(request.query))
 
     async def event_stream():
@@ -62,18 +65,18 @@ async def query(request: QueryRequest):
             for event in events[last_index:]:
                 yield event.encode()
             last_index = len(events)
-            
+
             if events and events[-1].event_type == "JOB_COMPLETE":
                 break
-            
             if task.done() and last_index == len(events):
-                # Ensure we break if task finishes but missed JOB_COMPLETE
                 break
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.05)  # tighter poll for lower token latency
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+
+# ── Endpoint 2 ───────────────────────────────────────────────────
 @app.get("/jobs/{job_id}/trace")
 async def get_trace(job_id: UUID) -> dict[str, Any]:
     memory_trace = [
@@ -81,29 +84,55 @@ async def get_trace(job_id: UUID) -> dict[str, Any]:
         for event in event_logger.memory_events_by_job.get(str(job_id), [])
     ]
     db_trace = await _load_db_trace(job_id)
-    return {"job_id": str(job_id), "trace": db_trace or memory_trace}
+    trace = db_trace or memory_trace
+    return {"job_id": str(job_id), "trace": trace}
 
+
+# ── Endpoint 3 ───────────────────────────────────────────────────
 @app.get("/evals/latest")
 async def get_latest_eval() -> dict[str, Any]:
     run = latest_run() or run_all_cases()
     summary = run["summary"]
+    by_dim = summary.get("by_dimension", {})
+    # Enrich by_dimension with min/worst_case_id
+    enriched_dim: dict[str, Any] = {}
+    for dim, info in by_dim.items():
+        failed = info.get("failed_cases", [])
+        avg = info.get("avg_score", 0.0)
+        enriched_dim[dim] = {
+            "avg": avg,
+            "min": min(
+                (r["scores"][dim]["score"] for r in run.get("cases", []) if dim in r.get("scores", {})),
+                default=avg,
+            ),
+            "worst_case_id": failed[0] if failed else None,
+        }
     return {
         "run_id": run["run_id"],
         "run_at": run.get("run_at") or datetime.now(timezone.utc).isoformat(),
-        "by_category": summary["by_category"],
-        "by_dimension": summary["by_dimension"],
+        "by_category": summary.get("by_category", {}),
+        "by_dimension": enriched_dim,
     }
 
+
+# ── Endpoint 4 ───────────────────────────────────────────────────
 @app.post("/rewrites/{rewrite_id}/decision")
 async def post_rewrite_decision(rewrite_id: str, request: RewriteDecisionRequest):
     try:
-        rewrite = await decide_rewrite(rewrite_id, request.decision, request.notes, latest_run())
+        rewrite = await decide_rewrite(
+            rewrite_id,
+            request.decision,
+            request.decided_by,
+            latest_run(),
+        )
         return rewrite
     except KeyError:
         return error_response("REWRITE_NOT_FOUND", f"Rewrite {rewrite_id} was not found.", status_code=404)
     except ValueError as exc:
         return error_response("INVALID_REWRITE_DECISION", str(exc), status_code=400)
 
+
+# ── Endpoint 5 ───────────────────────────────────────────────────
 @app.post("/evals/rerun-failures")
 async def rerun_failures() -> dict[str, Any]:
     run = latest_run() or run_all_cases()
@@ -114,6 +143,19 @@ async def rerun_failures() -> dict[str, Any]:
         "summary": rerun["summary"],
     }
 
+
+# ── Bonus endpoint (queryable rewrites) ──────────────────────────
+@app.get("/rewrites")
+async def list_rewrites() -> dict[str, Any]:
+    """Bonus: return all prompt rewrites queryable from DB, grouped by agent_id."""
+    all_rewrites = await list_rewrites_from_db()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for rw in all_rewrites:
+        grouped.setdefault(rw["agent_id"], []).append(rw)
+    return {"total": len(all_rewrites), "by_agent": grouped}
+
+
+# ── Internal helpers ─────────────────────────────────────────────
 async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
     try:
         from db.db import get_async_session
@@ -122,8 +164,13 @@ async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
 
         session = get_async_session()
         async with session:
-            event_rows = (await session.execute(select(AgentEvent).where(AgentEvent.job_id == job_id))).scalars().all()
-            tool_rows = (await session.execute(select(ToolCall).where(ToolCall.job_id == job_id))).scalars().all()
+            event_rows = (
+                await session.execute(select(AgentEvent).where(AgentEvent.job_id == job_id))
+            ).scalars().all()
+            tool_rows = (
+                await session.execute(select(ToolCall).where(ToolCall.job_id == job_id))
+            ).scalars().all()
+
         trace = [
             {
                 "kind": "agent_event",
@@ -156,6 +203,7 @@ async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
         return sorted(trace, key=lambda item: item["timestamp"])
     except Exception:
         return []
+
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_, exc: HTTPException):

@@ -122,10 +122,14 @@ class EvalRun(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     total_cases: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    category_breakdown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    dimension_scores: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    test_case_results: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     cases = relationship("EvalCase", back_populates="eval_run", cascade="all, delete-orphan")
     rewrites = relationship("PromptRewrite", back_populates="eval_run", cascade="all, delete-orphan")
+
 
 
 class EvalCase(Base):
@@ -160,7 +164,7 @@ class PromptRewrite(Base):
     __tablename__ = "prompt_rewrites"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[str] = mapped_column(ForeignKey("eval_runs.id", ondelete="CASCADE"), nullable=False)
+    eval_run_id: Mapped[str | None] = mapped_column(ForeignKey("eval_runs.id", ondelete="SET NULL"), nullable=True)
     agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
     dimension: Mapped[str] = mapped_column(String(128), nullable=False)
     original_prompt: Mapped[str] = mapped_column(Text, nullable=False)
@@ -170,10 +174,13 @@ class PromptRewrite(Base):
     status: Mapped[str] = mapped_column(
         Enum(RewriteStatus, name="rewrite_status"), nullable=False, server_default=RewriteStatus.pending.value
     )
+    performance_delta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     approvals = relationship("RewriteApproval", back_populates="prompt_rewrite", cascade="all, delete-orphan")
-    eval_run = relationship("EvalRun", back_populates="rewrites")
+    eval_run = relationship("EvalRun", back_populates="rewrites", foreign_keys=[eval_run_id])
 
 
 class RewriteApproval(Base):
