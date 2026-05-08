@@ -1,0 +1,32 @@
+[
+  {
+    "case_id": "ambiguous_001",
+    "category": "ambiguous",
+    "query": "Tell me about the project.",
+    "expected_answer": "decomposition"
+  },
+  {
+    "case_id": "ambiguous_002",
+    "category": "ambiguous",
+    "query": "Compare the options.",
+    "expected_answer": "subtasks"
+  },
+  {
+    "case_id": "ambiguous_003",
+    "category": "ambiguous",
+    "query": "Make it better.",
+    "expected_answer": "clarification"
+  },
+  {
+    "case_id": "ambiguous_004",
+    "category": "ambiguous",
+    "query": "Analyze this.",
+    "expected_answer": "dependencies"
+  },
+  {
+    "case_id": "ambiguous_005",
+    "category": "ambiguous",
+    "query": "What should we do next?",
+    "expected_answer": "plan"
+  }
+]
