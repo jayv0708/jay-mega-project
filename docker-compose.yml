@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     restart: unless-stopped
     env_file: .env
     volumes:
@@ -20,6 +20,7 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - ./api:/app/api
+      - /var/run/docker.sock:/var/run/docker.sock
 
   worker:
     build:
@@ -31,6 +32,7 @@ services:
       - db
     volumes:
       - ./worker:/app/worker
+      - /var/run/docker.sock:/var/run/docker.sock
 
   log-ui:
     build:

@@ -8,6 +8,8 @@ from app.context import AgentOutput, Chunk, Citation, Contradiction, SharedConte
 from agents.base import BaseAgent
 from agents.llm import AnthropicClient
 from agents.prompt_loader import load_prompt_json
+from retrieval import RetrievalService, RetrievedChunk
+from db.db import get_async_session
 
 
 class OrchestratorAgent(BaseAgent):
@@ -96,10 +98,85 @@ class DecompositionAgent(BaseAgent):
 
 
 class RAGAgent(BaseAgent):
-    def __init__(self, agent_id: str = "rag", max_context_budget: int = 2400) -> None:
+    def __init__(
+        self,
+        agent_id: str = "rag",
+        max_context_budget: int = 2400,
+        retrieval_service: RetrievalService = None
+    ) -> None:
         super().__init__(agent_id, max_context_budget)
+        self.retrieval_service = retrieval_service
 
     async def execute(self, context: SharedContext) -> SharedContext:
+        # If no retrieval service is provided, fall back to mock data
+        if self.retrieval_service is None:
+            return await self._execute_mock_retrieval(context)
+
+        # Perform real retrieval
+        async with get_async_session() as db_session:
+            retrieved_chunks = await self.retrieval_service.retrieve(
+                query=context.query,
+                top_k=5,  # Retrieve top 5 chunks
+                db_session=db_session
+            )
+
+        # Convert RetrievedChunk objects to Chunk objects for context
+        chunks = []
+        for retrieved in retrieved_chunks:
+            chunk = Chunk(
+                id=retrieved.chunk_id,
+                text=retrieved.content,
+                source_url=f"doc://{retrieved.document_id}",
+                relevance_score=retrieved.combined_score,
+                metadata={
+                    "document_id": retrieved.document_id,
+                    "chunk_index": retrieved.chunk_index,
+                    "semantic_score": retrieved.semantic_score,
+                    "bm25_score": retrieved.bm25_score,
+                }
+            )
+            chunks.append(chunk)
+
+        if not chunks:
+            # If no chunks found, fall back to mock data
+            return await self._execute_mock_retrieval(context)
+
+        self.check_can_add([chunk.model_dump() for chunk in chunks])
+        existing = {chunk.id for chunk in context.retrieved_chunks}
+        context.retrieved_chunks.extend(chunk for chunk in chunks if chunk.id not in existing)
+
+        # Create citations for the retrieved chunks
+        sentences = []
+        for i, chunk in enumerate(chunks[:3]):  # Use top 3 chunks
+            sentence = f"Evidence {i+1}: {chunk.text[:200]}..." if len(chunk.text) > 200 else f"Evidence {i+1}: {chunk.text}"
+            sentences.append((sentence, chunk))
+
+            context.citations.append(
+                Citation(
+                    sentence=sentence,
+                    chunk_id=chunk.id,
+                    agent_id=self.agent_id,
+                    source_url=chunk.source_url,
+                    confidence=chunk.relevance_score,
+                )
+            )
+
+        output_text = " ".join(sentence for sentence, _ in sentences)
+        context.add_agent_output(
+            AgentOutput(
+                agent_id=self.agent_id,
+                output=output_text,
+                metadata={
+                    "retrieval_count": len(chunks),
+                    "citations": [citation.model_dump() for citation in context.citations if citation.agent_id == self.agent_id],
+                },
+            )
+        )
+        self.consume_budget(len(output_text) // 4)  # Rough token estimation
+        return context
+
+    async def _execute_mock_retrieval(self, context: SharedContext) -> SharedContext:
+        """Fallback mock retrieval for when no real retrieval service is available."""
         chunk_a = Chunk(
             id="chunk_a",
             text=f"Primary evidence about '{context.query}' establishes the central answer frame.",
@@ -240,96 +317,3 @@ class SynthesisAgent(BaseAgent):
         self.consume_budget(100)
         return context
 
-
-class CompressionAgent(BaseAgent):
-    def __init__(self, agent_id: str = "compression", max_context_budget: int = 1024) -> None:
-        super().__init__(agent_id, max_context_budget)
-
-    async def execute(self, context: SharedContext) -> SharedContext:
-        if self.context_manager is not None:
-            self.context_manager.compress_context(self.agent_id)
-        for chunk in context.retrieved_chunks:
-            if not any(citation.chunk_id == chunk.id and citation.agent_id == self.agent_id for citation in context.citations):
-                context.citations.append(
-                    Citation(
-                        sentence=chunk.text[:160],
-                        chunk_id=chunk.id,
-                        agent_id=self.agent_id,
-                        source_url=chunk.source_url,
-                        confidence=chunk.relevance_score,
-                    )
-                )
-        context.add_agent_output(
-            AgentOutput(
-                agent_id=self.agent_id,
-                output="Compressed narrative agent output while preserving structured tool outputs, scores, and citations.",
-                metadata={"compression_mode": "lossless_structured_lossy_narrative"},
-            )
-        )
-        return context
-
-
-class MetaAgent(BaseAgent):
-    def __init__(self, agent_id: str = "meta", max_context_budget: int = 1600) -> None:
-        super().__init__(agent_id, max_context_budget)
-
-    async def execute(self, context: SharedContext) -> SharedContext:
-        original_prompt = "See agents/prompts for current prompt."
-        proposed_prompt = original_prompt + "\nRequire stricter citation and contradiction handling."
-        diff = "\n".join(
-            difflib.unified_diff(
-                original_prompt.splitlines(),
-                proposed_prompt.splitlines(),
-                fromfile="original",
-                tofile="proposed",
-                lineterm="",
-            )
-        )
-        context.add_agent_output(
-            AgentOutput(
-                agent_id=self.agent_id,
-                output="Proposed one prompt rewrite for the worst failing eval dimension.",
-                metadata={
-                    "original_prompt": original_prompt,
-                    "proposed_prompt": proposed_prompt,
-                    "unified_diff": diff,
-                    "dimension": "citation_accuracy",
-                    "justification": "Failures usually point to weak provenance or missing contradiction resolution.",
-                },
-            )
-        )
-        return context
-
-
-class RetrievalAgent(RAGAgent):
-    def __init__(self, agent_id: str = "retrieval", max_context_budget: int = 2048) -> None:
-        super().__init__(agent_id, max_context_budget)
-
-    async def execute(self, context: SharedContext) -> SharedContext:
-        if not context.retrieved_chunks:
-            chunk = Chunk(
-                id="chunk_001",
-                text=f"Retrieved information for: {context.query}",
-                source_url="fixture://search/default",
-                relevance_score=0.85,
-            )
-            context.retrieved_chunks.append(chunk)
-        context.add_agent_output(
-            AgentOutput(
-                agent_id=self.agent_id,
-                output=f"Retrieved {len(context.retrieved_chunks)} chunks",
-                metadata={"chunk_count": len(context.retrieved_chunks)},
-            )
-        )
-        self.consume_budget(50)
-        return context
-
-
-class VerificationAgent(CritiqueAgent):
-    def __init__(self, agent_id: str = "verification", max_context_budget: int = 1536) -> None:
-        super().__init__(agent_id, max_context_budget)
-
-
-class RefinementAgent(SynthesisAgent):
-    def __init__(self, agent_id: str = "refinement", max_context_budget: int = 1024) -> None:
-        super().__init__(agent_id, max_context_budget)

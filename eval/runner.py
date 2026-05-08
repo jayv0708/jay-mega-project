@@ -1,3 +1,5 @@
+"""Evaluation runner with LLM-as-a-judge."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,8 +9,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.pipeline import OrchestrationPipeline
-
+from app.pipeline import DAGExecutor
+from db.db import get_async_session
+from db.models import Job, JobStatus
+from agents.llm import AnthropicClient
+from app.events import EventLogger
 
 EVAL_DIMENSIONS = [
     "answer_correctness",
@@ -21,6 +26,8 @@ EVAL_DIMENSIONS = [
 
 CASES_DIR = Path(__file__).resolve().parent / "cases"
 LATEST_EVAL_PATH = Path(__file__).resolve().parent / "latest_eval.json"
+
+llm_judge = AnthropicClient()
 
 
 def load_cases(directory: Path = CASES_DIR) -> list[dict[str, Any]]:
@@ -35,13 +42,32 @@ def load_cases(directory: Path = CASES_DIR) -> list[dict[str, Any]]:
 
 
 async def run_case(case: dict[str, Any]) -> dict[str, Any]:
-    pipeline = OrchestrationPipeline()
-    events = []
-    async for event in pipeline.stream(case["query"], job_id=uuid4()):
-        events.append(event.model_dump(mode="json"))
-    final_event = next(event for event in reversed(events) if event["event_type"] == "JOB_COMPLETE")
-    final_answer = final_event["data"]["final_answer"]
-    scores = score_case(case, events, final_answer)
+    job_id = str(uuid4())
+    query = case["query"]
+    
+    # Save dummy job
+    async with get_async_session() as session:
+        job = Job(id=job_id, query=query, status=JobStatus.pending)
+        session.add(job)
+        await session.commit()
+        
+    event_logger = EventLogger()
+    executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
+    
+    try:
+        await executor.execute_dag(query)
+    except Exception as e:
+        print(f"Error executing DAG for case {case['case_id']}: {e}")
+        
+    events = [event.model_dump(mode="json") for event in event_logger.memory_events_by_job.get(job_id, [])]
+    
+    final_answer = ""
+    for event in reversed(events):
+        if event["event_type"] == "JOB_COMPLETE":
+            final_answer = event["data"].get("final_answer", "")
+            break
+
+    scores = await score_case_llm(case, events, final_answer)
     passed = all(score["score"] >= 0.65 for score in scores.values())
     return {
         "case_id": case["case_id"],
@@ -55,50 +81,48 @@ async def run_case(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def score_case(case: dict[str, Any], events: list[dict[str, Any]], final_answer: str) -> dict[str, dict[str, Any]]:
-    token_events = [event for event in events if event["event_type"] == "TOKEN"]
-    budget_violations = [event for event in events if event["event_type"] == "POLICY_VIOLATION"]
-    handoffs = [event for event in events if event["event_type"] == "HANDOFF"]
-    expected = (case.get("expected_answer") or "").lower()
-    answer = final_answer.lower()
+async def score_case_llm(case: dict[str, Any], events: list[dict[str, Any]], final_answer: str) -> dict[str, dict[str, Any]]:
+    system_prompt = (
+        "You are an impartial evaluator for an LLM orchestration system.\n"
+        "Your goal is to grade the system's output and trace based on six dimensions.\n"
+        "Output MUST be JSON conforming to the following structure:\n"
+        "{\n"
+        "  \"answer_correctness\": {\"score\": float 0-1, \"justification\": str},\n"
+        "  \"citation_accuracy\": {\"score\": float 0-1, \"justification\": str},\n"
+        "  \"contradiction_resolution_quality\": {\"score\": float 0-1, \"justification\": str},\n"
+        "  \"tool_selection_efficiency\": {\"score\": float 0-1, \"justification\": str},\n"
+        "  \"context_budget_compliance\": {\"score\": float 0-1, \"justification\": str},\n"
+        "  \"critique_agreement_rate\": {\"score\": float 0-1, \"justification\": str}\n"
+        "}"
+    )
 
-    if case["category"] == "baseline":
-        correctness = 1.0 if expected and any(term.strip() and term.strip() in answer for term in expected.split()) else 0.7
-        correctness_why = "Baseline answer overlaps expected answer terms."
-    elif case["category"] == "ambiguous":
-        correctness = 1.0 if any("decomposition" in event["agent_id"] for event in token_events + handoffs) else 0.5
-        correctness_why = "Ambiguous case produced decomposition activity."
-    else:
-        correctness = 0.8 if "ignore previous" not in answer else 0.2
-        correctness_why = "Adversarial case avoided obvious instruction leakage."
+    user_prompt = (
+        f"Query: {case['query']}\n"
+        f"Expected Answer Hints: {case.get('expected_answer', 'None')}\n"
+        f"Actual Final Answer: {final_answer}\n"
+        f"Execution Trace Events (abridged): {json.dumps(events[:5] + events[-5:])}\n\n"
+        "Please provide your JSON evaluation."
+    )
 
-    citation_accuracy = 1.0 if "source_chunk_id" in json.dumps(events) or token_events else 0.4
-    contradiction_quality = 1.0 if "contradiction" in json.dumps(events).lower() or case["category"] != "adversarial" else 0.6
-    total_tool_calls = len([event for event in events if event["event_type"].startswith("TOOL_CALL")])
-    unnecessary_calls = max(0, total_tool_calls - case.get("expected_tool_calls", total_tool_calls))
-    tool_efficiency = 1.0 if total_tool_calls == 0 else max(0.0, 1.0 - unnecessary_calls / total_tool_calls)
-    budget_compliance = 0.0 if budget_violations else 1.0
-    critique_flags = json.dumps(events).lower().count("flag")
-    addressed = json.dumps(events).lower().count("addressed")
-    critique_agreement = 1.0 if critique_flags == 0 else min(1.0, addressed / critique_flags)
-
-    return {
-        "answer_correctness": {"score": correctness, "justification": correctness_why},
-        "citation_accuracy": {"score": citation_accuracy, "justification": "Final stream includes provenance-bearing synthesis output."},
-        "contradiction_resolution_quality": {
-            "score": contradiction_quality,
-            "justification": "Contradiction records are resolved or the case did not require internal disagreement.",
-        },
-        "tool_selection_efficiency": {
-            "score": tool_efficiency,
-            "justification": "Penalizes unnecessary tool start/end events relative to fixture expectation.",
-        },
-        "context_budget_compliance": {"score": budget_compliance, "justification": "No policy violation events were emitted."},
-        "critique_agreement_rate": {
-            "score": critique_agreement,
-            "justification": "Measures whether critique flags were addressed by synthesis metadata.",
-        },
-    }
+    try:
+        response = await llm_judge.complete_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.0,
+            max_tokens=800,
+            fallback={
+                "answer_correctness": {"score": 0.5, "justification": "LLM Judge Failed to parse"},
+                "citation_accuracy": {"score": 0.5, "justification": "LLM Judge Failed to parse"},
+                "contradiction_resolution_quality": {"score": 0.5, "justification": "LLM Judge Failed to parse"},
+                "tool_selection_efficiency": {"score": 0.5, "justification": "LLM Judge Failed to parse"},
+                "context_budget_compliance": {"score": 0.5, "justification": "LLM Judge Failed to parse"},
+                "critique_agreement_rate": {"score": 0.5, "justification": "LLM Judge Failed to parse"}
+            }
+        )
+        return response
+    except Exception as e:
+        print(f"Error scoring case {case['case_id']}: {e}")
+        return {k: {"score": 0.0, "justification": str(e)} for k in EVAL_DIMENSIONS}
 
 
 async def run_all_cases_async(cases_directory: Path = CASES_DIR, only_failed_from: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -106,13 +130,17 @@ async def run_all_cases_async(cases_directory: Path = CASES_DIR, only_failed_fro
     if only_failed_from:
         failed_ids = {case["case_id"] for case in only_failed_from.get("cases", []) if not case.get("passed")}
         cases = [case for case in cases if case["case_id"] in failed_ids]
-    results = [await run_case(case) for case in cases]
+    
+    # Run sequentially or in parallel; let's do sequentially to avoid rate limits or DB locks
+    results = []
+    for case in cases:
+        results.append(await run_case(case))
+        
     summary = summarize_results(results)
     run = {"run_id": str(uuid4()), "total_cases": len(results), "summary": summary, "cases": results}
     LATEST_EVAL_PATH.write_text(json.dumps(run, indent=2), encoding="utf-8")
     if only_failed_from is None:
         from eval.meta_loop import propose_rewrite
-
         propose_rewrite(run)
     return run
 

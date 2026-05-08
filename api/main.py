@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.events import EventLogger
-from app.pipeline import OrchestrationPipeline
+from app.pipeline import DAGExecutor
+from db.db import get_async_session
+from db.models import Job, JobStatus
 from eval.meta_loop import decide_rewrite, get_rewrite, load_rewrites
 from eval.runner import latest_run, run_all_cases, run_all_cases_async
 
@@ -40,15 +42,38 @@ def error_response(error_code: str, message: str, job_id: str | None = None, sta
 
 
 @app.post("/query")
-async def query(request: QueryRequest):
+async def query(request: QueryRequest, background_tasks: BackgroundTasks):
+    import uuid
     if not request.query.strip():
         return error_response("EMPTY_QUERY", "Query must not be empty.")
 
-    pipeline = OrchestrationPipeline(event_logger=event_logger)
+    job_id = str(uuid.uuid4())
+    
+    async with get_async_session() as session:
+        job = Job(id=job_id, query=request.query, status=JobStatus.pending)
+        session.add(job)
+        await session.commit()
 
+    executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
+    background_tasks.add_task(executor.execute_dag, request.query)
+
+    return {"job_id": job_id, "status": "pending", "stream_url": f"/jobs/{job_id}/stream"}
+
+
+@app.get("/jobs/{job_id}/stream")
+async def job_stream(job_id: str):
     async def event_stream():
-        async for event in pipeline.stream(request.query):
-            yield event.encode()
+        last_index = 0
+        import asyncio
+        while True:
+            events = event_logger.memory_events_by_job.get(job_id, [])
+            for event in events[last_index:]:
+                yield event.encode()
+            last_index = len(events)
+            
+            if events and events[-1].event_type == "JOB_COMPLETE":
+                break
+            await asyncio.sleep(0.5)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
