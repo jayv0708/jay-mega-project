@@ -6,18 +6,29 @@ from pathlib import Path
 from typing import Any, Dict
 
 from tools.base import BaseTool, ToolResult
+from agents.llm import AnthropicClient
 
 
 class NLToSQLTool(BaseTool):
     def __init__(self, fixture_db: Path) -> None:
         super().__init__("NLToSQLTool")
         self.fixture_db = fixture_db
+        self.llm = AnthropicClient()
 
-    def execute(self, input_data: Dict[str, Any]) -> ToolResult:
+    async def execute(self, input_data: Dict[str, Any]) -> ToolResult:
         if not isinstance(input_data, dict) or "query" not in input_data:
             return self.on_malformed_input()
 
-        sql_used = input_data.get("sql", "SELECT 1")
+        sql_used = input_data.get("sql")
+        if not sql_used:
+            generated = await self.llm.complete_json(
+                "Convert natural language to SQLite SQL. Return JSON only: {\"sql\": \"...\"}.",
+                str(input_data["query"]),
+                temperature=0.0,
+                max_tokens=256,
+                fallback={"sql": "SELECT 1 AS value"},
+            )
+            sql_used = generated.get("sql", "SELECT 1 AS value")
         try:
             with sqlite3.connect(self.fixture_db) as conn:
                 cursor = conn.execute(sql_used)
@@ -31,4 +42,17 @@ class NLToSQLTool(BaseTool):
                     },
                 )
         except sqlite3.Error as exc:
-            return self.on_malformed_input()
+            return ToolResult(
+                success=False,
+                output={"rows": [], "error_code": "INVALID_SQL", "sql_used": sql_used},
+                error_code="INVALID_SQL",
+                message=str(exc),
+            )
+
+    def on_malformed_input(self) -> ToolResult:
+        return ToolResult(
+            success=False,
+            output={"rows": [], "error_code": "INVALID_SQL", "sql_used": ""},
+            error_code="INVALID_SQL",
+            message="Invalid SQL tool input.",
+        )

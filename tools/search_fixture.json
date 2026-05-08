@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "url": "fixture://docs/orchestration",
+      "title": "Multi-agent orchestration overview",
+      "snippet": "A multi-agent orchestration system coordinates specialized agents through shared state, tool calls, and structured logging.",
+      "relevance_score": 0.93
+    },
+    {
+      "url": "fixture://docs/evaluation",
+      "title": "Evaluation harness basics",
+      "snippet": "Evaluation pipelines compare outputs against expected answers and score citation accuracy, budget compliance, and contradiction handling.",
+      "relevance_score": 0.88
+    },
+    {
+      "url": "fixture://docs/sse",
+      "title": "Server-sent event tracing",
+      "snippet": "SSE streams expose token events, handoffs, tool start and end events, and job completion notifications in real time.",
+      "relevance_score": 0.82
+    }
+  ]
+}

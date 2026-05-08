@@ -9,11 +9,20 @@ class SelfReflectionTool(BaseTool):
     def __init__(self) -> None:
         super().__init__("SelfReflectionTool")
 
-    def execute(self, input_data: Dict[str, Any]) -> ToolResult:
-        if not isinstance(input_data, dict) or "agent_outputs" not in input_data:
+    async def execute(self, input_data: Dict[str, Any]) -> ToolResult:
+        if not isinstance(input_data, dict):
             return self.on_malformed_input()
 
-        outputs = input_data["agent_outputs"]
+        shared_context = input_data.get("shared_context")
+        if shared_context is not None:
+            outputs = {
+                agent_id: output.model_dump()
+                for agent_id, output in shared_context.agent_outputs.items()
+            }
+        else:
+            outputs = input_data.get("agent_outputs")
+        if outputs is None:
+            return self.on_malformed_input()
         contradictions: List[Dict[str, Any]] = []
         claims: List[str] = []
 

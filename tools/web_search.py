@@ -13,13 +13,35 @@ class WebSearchTool(BaseTool):
         super().__init__("WebSearchTool")
         self.fixture_path = fixture_path
 
-    def execute(self, input_data: Dict[str, Any]) -> ToolResult:
+    def on_timeout(self) -> ToolResult:
+        return ToolResult(
+            success=False,
+            output={"results": [], "error_code": "SEARCH_TIMEOUT", "message": "Search fixture timed out."},
+            error_code="SEARCH_TIMEOUT",
+            message="Search fixture timed out.",
+        )
+
+    def on_empty_result(self) -> ToolResult:
+        return ToolResult(
+            success=False,
+            output={"results": [], "error_code": "NO_RESULTS", "message": "No search results found."},
+            error_code="NO_RESULTS",
+            message="No search results found.",
+        )
+
+    async def execute(self, input_data: Dict[str, Any]) -> ToolResult:
         start = perf_counter()
         if not isinstance(input_data, dict) or "query" not in input_data:
             return self.on_malformed_input()
         try:
             raw = self.fixture_path.read_text(encoding="utf-8")
-            results = json.loads(raw).get("results", [])
+            fixture = json.loads(raw)
+            all_results = fixture.get("results", [])
+            query = str(input_data["query"]).lower()
+            results = [
+                result for result in all_results
+                if query in (result.get("title", "") + " " + result.get("snippet", "")).lower()
+            ] or all_results[:3]
             latency_ms = int((perf_counter() - start) * 1000)
             output = {"results": results, "latency_ms": latency_ms}
             if not results:
