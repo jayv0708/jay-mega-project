@@ -25,11 +25,16 @@ SSE_EVENT_TYPES = {
     "TOKEN",
     "TOOL_CALL_START",
     "TOOL_CALL_END",
+    "TOOL_RETRY",
+    "TOOL_FAILURE",
     "HANDOFF",
+    "AGENT_START",
+    "AGENT_COMPLETE",
     "BUDGET_UPDATE",
     "POLICY_VIOLATION",
     "JOB_COMPLETE",
 }
+
 
 class SSEEvent(BaseModel):
     event_type: str

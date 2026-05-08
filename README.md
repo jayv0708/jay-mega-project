@@ -147,9 +147,14 @@ All errors return:
 
 ```json
 {"event_type":"HANDOFF","agent_id":"system","data":{"to_agent":"decomposition"},"budget_remaining":9900,"trace_id":"4bf92f3577b34da6","span_id":"00f067aa0ba902b7","timestamp":"2026-05-08T11:45:00Z"}
-{"event_type":"TOKEN","agent_id":"decomposition","data":{"token":"Created 3 subtasks..."},"budget_remaining":9780,"trace_id":"4bf92f3577b34da6","span_id":"1a2b3c4d5e6f7890","timestamp":"2026-05-08T11:45:01Z"}
+{"event_type":"TOKEN","agent_id":"decomposition","data":{"token":"Created "},"budget_remaining":9899,"trace_id":"4bf92f3577b34da6","span_id":"1a2b3c4d5e6f7890","timestamp":"2026-05-08T11:45:00Z"}
+{"event_type":"TOKEN","agent_id":"decomposition","data":{"token":"3 "},"budget_remaining":9898,"trace_id":"4bf92f3577b34da6","span_id":"1a2b3c4d5e6f7891","timestamp":"2026-05-08T11:45:00Z"}
+{"event_type":"TOKEN","agent_id":"decomposition","data":{"token":"subtasks "},"budget_remaining":9897,"trace_id":"4bf92f3577b34da6","span_id":"1a2b3c4d5e6f7892","timestamp":"2026-05-08T11:45:01Z"}
+{"event_type":"AGENT_COMPLETE","agent_id":"decomposition","data":{"output":"Created 3 subtasks..."},"budget_remaining":9780,"trace_id":"4bf92f3577b34da6","span_id":"1a2b3c4d5e6f7893","timestamp":"2026-05-08T11:45:01Z"}
 {"event_type":"HANDOFF","agent_id":"system","data":{"to_agent":"rag"},"budget_remaining":9780,"trace_id":"4bf92f3577b34da6","span_id":"...","timestamp":"..."}
-{"event_type":"JOB_COMPLETE","agent_id":"synthesis","data":{"job_id":"...","final_answer":"PostgreSQL is..."},"budget_remaining":9000,"trace_id":"4bf92f3577b34da6","span_id":"...","timestamp":"..."}
+{"event_type":"TOKEN","agent_id":"rag","data":{"token":"Retrieved "},"budget_remaining":9779,"trace_id":"4bf92f3577b34da6","span_id":"...","timestamp":"..."}
+{"event_type":"AGENT_COMPLETE","agent_id":"rag","data":{"output":"Retrieved 2 evidence chunks..."},"budget_remaining":9650,"trace_id":"4bf92f3577b34da6","span_id":"...","timestamp":"..."}
+{"event_type":"JOB_COMPLETE","agent_id":"synthesis","data":{"job_id":"...","final_answer":"PostgreSQL is...","provenance_map":[...]},"budget_remaining":9000,"trace_id":"4bf92f3577b34da6","span_id":"...","timestamp":"..."}
 ```
 
 ---
