@@ -42,6 +42,10 @@ def error_response(error_code: str, message: str, job_id: str | None = None, sta
     )
 
 
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
+
 # ── Endpoint 1 ───────────────────────────────────────────────────
 @app.post("/query")
 async def query(request: QueryRequest):
@@ -50,13 +54,18 @@ async def query(request: QueryRequest):
 
     job_id = str(uuid.uuid4())
 
-    async with get_async_session() as session:
-        job = Job(id=job_id, query=request.query, status=JobStatus.pending)
-        session.add(job)
-        await session.commit()
+    with tracer.start_as_current_span("api_query_endpoint") as span:
+        span.set_attribute("job.id", job_id)
+        span.set_attribute("query.length", len(request.query))
+        
+        async with get_async_session() as session:
+            job = Job(id=job_id, query=request.query, status=JobStatus.pending)
+            session.add(job)
+            await session.commit()
 
-    executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
-    task = asyncio.create_task(executor.execute_dag(request.query))
+        executor = DAGExecutor(job_id=job_id, event_logger=event_logger)
+        task = asyncio.create_task(executor.execute_dag(request.query))
+
 
     async def event_stream():
         last_index = 0
@@ -142,17 +151,6 @@ async def rerun_failures() -> dict[str, Any]:
         "rerun_case_count": rerun["total_cases"],
         "summary": rerun["summary"],
     }
-
-
-# ── Bonus endpoint (queryable rewrites) ──────────────────────────
-@app.get("/rewrites")
-async def list_rewrites() -> dict[str, Any]:
-    """Bonus: return all prompt rewrites queryable from DB, grouped by agent_id."""
-    all_rewrites = await list_rewrites_from_db()
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for rw in all_rewrites:
-        grouped.setdefault(rw["agent_id"], []).append(rw)
-    return {"total": len(all_rewrites), "by_agent": grouped}
 
 
 # ── Internal helpers ─────────────────────────────────────────────

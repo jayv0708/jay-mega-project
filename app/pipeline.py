@@ -18,6 +18,9 @@ from db.db import get_async_session
 from db.models import Job, JobStatus
 
 
+from opentelemetry import trace
+tracer = trace.get_tracer(__name__)
+
 class DAGExecutor:
     def __init__(self, job_id: str | UUID, event_logger: EventLogger | None = None) -> None:
         self.job_id = str(job_id)
@@ -33,14 +36,19 @@ class DAGExecutor:
             "synthesis": SynthesisAgent(),
         }
 
+    @tracer.start_as_current_span("execute_dag")
     async def execute_dag(self, query: str) -> None:
         """Executes the DAG statemachine and persists step state."""
+        span = trace.get_current_span()
+        span.set_attribute("job.id", self.job_id)
+        
         context = SharedContext(query=query, job_id=self.job_id)
         budget_manager = ContextBudgetManager(
             context,
             total_tokens=10000,
             per_agent_limits={agent_id: agent.max_context_budget for agent_id, agent in self.agents.items()},
         )
+
 
         async with get_async_session() as session:
             broker = JobBroker(session)
