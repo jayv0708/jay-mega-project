@@ -166,14 +166,29 @@ class RAGAgent(BaseAgent):
 
         # --- Retrieval poisoning defence ---
         from tools.security import inspect_retrieval_chunk
+        from app.context import PolicyViolation
         safe_chunks = []
         for chunk in chunks:
             result = inspect_retrieval_chunk(chunk.text, chunk.id, job_id=str(context.job_id))
             if result.safe:
                 safe_chunks.append(chunk)
+            else:
+                v = result.violations[0]
+                violation = PolicyViolation(
+                    violation_type="retrieval_poison",
+                    message=f"Blocked poisoned chunk {chunk.id}.",
+                    details={
+                        "chunk_id": chunk.id,
+                        "pattern": v.pattern,
+                        "snippet": v.snippet,
+                    }
+                )
+                context.add_policy_violation(violation, persist=True)
+                
         chunks = safe_chunks
         if not chunks:
             return await self._execute_mock_retrieval(context)
+
 
         self.check_can_add([chunk.model_dump() for chunk in chunks])
         existing = {chunk.id for chunk in context.retrieved_chunks}

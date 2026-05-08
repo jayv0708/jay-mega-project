@@ -78,6 +78,43 @@ class ToolOrchestrator:
             # Determine failure reason
             reason = _classify_failure(result)
 
+            if result.error_code == "SECURITY_VIOLATION":
+                # Do not retry security violations!
+                if context is not None:
+                    from app.context import PolicyViolation
+                    violations = result.output.get("violations", [])
+                    kind = violations[0].get("kind", "security_violation") if violations else "security_violation"
+                    v = PolicyViolation(
+                        violation_type=kind,
+                        message=result.message or "Security violation in tool input.",
+                        details={"violations": violations}
+                    )
+                    context.add_policy_violation(v, persist=True)
+                
+                await self._emit_sse(
+                    event_type="POLICY_VIOLATION",
+                    agent_id=agent_id,
+                    job_id=job_id,
+                    data={
+                        "violation_type": "security_violation",
+                        "message": result.message,
+                        "details": result.output.get("violations", []),
+                    }
+                )
+                await self._emit_sse(
+                    event_type="TOOL_FAILURE",
+                    agent_id=agent_id,
+                    job_id=job_id,
+                    data={
+                        "tool_name": tool_name,
+                        "total_attempts": attempt + 1,
+                        "final_error_code": result.error_code,
+                        "reason": reason,
+                    },
+                )
+                last_result = result
+                break
+
             if attempt < MAX_RETRIES:
                 # Emit TOOL_RETRY SSE event
                 await self._emit_sse(
