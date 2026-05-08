@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from app.events import EventLogger
 from app.pipeline import OrchestrationPipeline
+from eval.meta_loop import decide_rewrite, get_rewrite, load_rewrites
+from eval.runner import latest_run, run_all_cases, run_all_cases_async
 
 
 app = FastAPI(title="Real-Time Multi-Agent LLM Orchestration System", version="0.6.0")
@@ -18,6 +20,11 @@ event_logger = EventLogger()
 
 class QueryRequest(BaseModel):
     query: str
+
+
+class RewriteDecisionRequest(BaseModel):
+    decision: str
+    notes: str = ""
 
 
 def error_response(error_code: str, message: str, job_id: str | None = None, status_code: int = 400) -> JSONResponse:
@@ -54,6 +61,40 @@ async def get_trace(job_id: UUID) -> dict[str, Any]:
     ]
     db_trace = await _load_db_trace(job_id)
     return {"job_id": str(job_id), "trace": db_trace or memory_trace}
+
+
+@app.get("/evals/latest")
+async def get_latest_eval() -> dict[str, Any]:
+    run = latest_run() or run_all_cases()
+    summary = run["summary"]
+    return {
+        "run_id": run["run_id"],
+        "run_at": run.get("run_at") or datetime.now(timezone.utc).isoformat(),
+        "by_category": summary["by_category"],
+        "by_dimension": summary["by_dimension"],
+    }
+
+
+@app.post("/rewrites/{rewrite_id}/decision")
+async def post_rewrite_decision(rewrite_id: str, request: RewriteDecisionRequest):
+    try:
+        rewrite = await decide_rewrite(rewrite_id, request.decision, request.notes, latest_run())
+        return rewrite
+    except KeyError:
+        return error_response("REWRITE_NOT_FOUND", f"Rewrite {rewrite_id} was not found.", status_code=404)
+    except ValueError as exc:
+        return error_response("INVALID_REWRITE_DECISION", str(exc), status_code=400)
+
+
+@app.post("/evals/rerun-failures")
+async def rerun_failures() -> dict[str, Any]:
+    run = latest_run() or run_all_cases()
+    rerun = await run_all_cases_async(only_failed_from=run)
+    return {
+        "run_id": rerun["run_id"],
+        "rerun_case_count": rerun["total_cases"],
+        "summary": rerun["summary"],
+    }
 
 
 async def _load_db_trace(job_id: UUID) -> list[dict[str, Any]]:
