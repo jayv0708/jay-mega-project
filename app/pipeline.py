@@ -10,7 +10,7 @@ from uuid import UUID
 from app.context import ContextBudgetExceeded, ContextBudgetManager, SharedContext
 
 from app.events import EventLogger, SSEEvent
-from agents.standard_agents import CritiqueAgent, DecompositionAgent, OrchestratorAgent, RAGAgent, SynthesisAgent
+from agents.standard_agents import CritiqueAgent, DecompositionAgent, OrchestratorAgent, RAGAgent, SynthesisAgent, CompressionAgent
 from retrieval.retrieval import RetrievalService
 from retrieval.embedding import EmbeddingService
 from job_queue.broker import JobBroker
@@ -34,6 +34,7 @@ class DAGExecutor:
             "rag": RAGAgent(retrieval_service=self.retrieval_service),
             "critique": CritiqueAgent(),
             "synthesis": SynthesisAgent(),
+            "compression": CompressionAgent(),
         }
 
     @tracer.start_as_current_span("execute_dag")
@@ -73,43 +74,65 @@ class DAGExecutor:
                 "synthesis": "Synthesized final answer resolving all contradictions with provenance map attached.",
             }
 
-            # Enqueue remaining steps according to DAG
-            for agent_id in execution_order:
-                if agent_id not in self.agents or agent_id == "orchestrator":
-                    continue
-                step = await broker.enqueue_step(self.job_id, agent_id, context.model_dump(mode="json"))
-                try:
-                    await self._run_agent_and_stream(
-                        agent_id, context, budget_manager,
-                        fallback_text=fallback_texts.get(agent_id, f"{agent_id} processing complete.")
-                    )
-                    await broker.complete_step(step.id, context.model_dump(mode="json"))
-                except ContextBudgetExceeded as cbe:
-                    # Emit POLICY_VIOLATION SSE immediately (not silently truncated)
-                    violation_details = {}
-                    if context.policy_violations:
-                        v = context.policy_violations[-1]
-                        violation_details = v.details
-                    pv_event = SSEEvent(
-                        event_type="POLICY_VIOLATION",
-                        agent_id=agent_id,
-                        data={
-                            "agent_id": agent_id,
-                            "violation_type": "context_budget_exceeded",
-                            "declared_budget": violation_details.get("declared_budget", 0),
-                            "actual_tokens": violation_details.get("actual_tokens", 0),
-                            "overflow": violation_details.get("overflow", 0),
-                            "message": str(cbe),
-                        },
-                        budget_remaining=budget_manager.check_remaining("shared"),
-                    )
-                    await self.event_logger.log_sse_event(UUID(self.job_id), pv_event)
-                    await broker.fail_step(step.id, str(cbe))
-                    # Orchestrator decides: mark step failed, continue pipeline
-                    continue
-                except Exception as e:
-                    await broker.fail_step(step.id, str(e))
-                    raise
+            # Run decomposition if selected to get the true DAG graph
+            if "decomposition" in execution_order:
+                step = await broker.enqueue_step(self.job_id, "decomposition", context.model_dump(mode="json"))
+                await self._run_agent_and_stream(
+                    "decomposition", context, budget_manager,
+                    fallback_text=fallback_texts.get("decomposition", "Created subtasks with dependency order.")
+                )
+                await broker.complete_step(step.id, context.model_dump(mode="json"))
+
+            # Create an asyncio Event for each subtask to block dependent tasks
+            task_events = {task.id: asyncio.Event() for task in getattr(context, "subtasks", [])}
+            
+            # If no subtasks were generated, fallback to linear execution for the rest
+            if not task_events:
+                for agent_id in execution_order:
+                    if agent_id in ("orchestrator", "decomposition") or agent_id not in self.agents:
+                        continue
+                    step = await broker.enqueue_step(self.job_id, agent_id, context.model_dump(mode="json"))
+                    try:
+                        await self._run_agent_and_stream(agent_id, context, budget_manager, fallback_text=fallback_texts.get(agent_id))
+                        await broker.complete_step(step.id, context.model_dump(mode="json"))
+                    except ContextBudgetExceeded as cbe:
+                        await self._handle_budget_exceeded(agent_id, context, budget_manager, cbe, step, broker)
+            else:
+                # Map subtask types to agent IDs
+                type_to_agent = {"retrieval": "rag", "critique": "critique", "synthesis": "synthesis"}
+                
+                async def execute_subtask(subtask):
+                    # Wait for all dependencies to complete
+                    for dep_id in subtask.dependencies:
+                        if dep_id in task_events:
+                            await task_events[dep_id].wait()
+                    
+                    agent_id = type_to_agent.get(subtask.type)
+                    if agent_id and agent_id in self.agents and agent_id in execution_order:
+                        step = await broker.enqueue_step(self.job_id, agent_id, context.model_dump(mode="json"))
+                        try:
+                            await self._run_agent_and_stream(agent_id, context, budget_manager, fallback_text=fallback_texts.get(agent_id))
+                            await broker.complete_step(step.id, context.model_dump(mode="json"))
+                        except ContextBudgetExceeded as cbe:
+                            # Try compression agent first
+                            if "compression" in self.agents:
+                                await self._run_agent_and_stream("compression", context, budget_manager)
+                                try:
+                                    # Retry after compression
+                                    await self._run_agent_and_stream(agent_id, context, budget_manager, fallback_text=fallback_texts.get(agent_id))
+                                    await broker.complete_step(step.id, context.model_dump(mode="json"))
+                                except ContextBudgetExceeded as cbe2:
+                                    await self._handle_budget_exceeded(agent_id, context, budget_manager, cbe2, step, broker)
+                            else:
+                                await self._handle_budget_exceeded(agent_id, context, budget_manager, cbe, step, broker)
+                        except Exception as e:
+                            await broker.fail_step(step.id, str(e))
+                            raise
+                    # Signal that this subtask is complete
+                    task_events[subtask.id].set()
+
+                # Run all subtasks concurrently (they will block internally on dependencies)
+                await asyncio.gather(*(execute_subtask(task) for task in context.subtasks))
 
 
             # Emit any policy violations accumulated during execution
@@ -193,3 +216,26 @@ class DAGExecutor:
             budget_remaining=budget_manager.check_remaining("shared"),
         )
         await self.event_logger.log_sse_event(UUID(self.job_id), complete_event)
+
+    async def _handle_budget_exceeded(self, agent_id, context, budget_manager, cbe, step, broker):
+        # Emit POLICY_VIOLATION SSE immediately
+        violation_details = {}
+        if context.policy_violations:
+            v = context.policy_violations[-1]
+            violation_details = v.details
+            
+        pv_event = SSEEvent(
+            event_type="POLICY_VIOLATION",
+            agent_id=agent_id,
+            data={
+                "agent_id": agent_id,
+                "violation_type": "context_budget_exceeded",
+                "declared_budget": violation_details.get("declared_budget", 0),
+                "actual_tokens": violation_details.get("actual_tokens", 0),
+                "overflow": violation_details.get("overflow", 0),
+                "message": str(cbe),
+            },
+            budget_remaining=budget_manager.check_remaining("shared"),
+        )
+        await self.event_logger.log_sse_event(UUID(self.job_id), pv_event)
+        await broker.fail_step(step.id, str(cbe))

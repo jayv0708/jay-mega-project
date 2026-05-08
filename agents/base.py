@@ -23,6 +23,10 @@ class BaseAgent(ABC):
     async def execute(self, context: SharedContext) -> SharedContext:
         raise NotImplementedError
 
+    def declare_budget(self, context: SharedContext) -> int:
+        """Explicitly declare the max context budget before execution."""
+        return self.max_context_budget
+
     async def _execute_with_tracking(
         self,
         context: SharedContext,
@@ -30,8 +34,12 @@ class BaseAgent(ABC):
     ) -> SharedContext:
         start_time = time.perf_counter()
         self.execution_count += 1
+        
+        # Explicitly declare budget before execution
+        declared_budget = self.declare_budget(context)
+        
         self.context_manager = budget_manager or ContextBudgetManager(context)
-        self.context_manager.register_agent(self.agent_id, self.max_context_budget)
+        self.context_manager.register_agent(self.agent_id, declared_budget)
         self.context_manager.check_remaining(self.agent_id)
 
         try:

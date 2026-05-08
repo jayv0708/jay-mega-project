@@ -149,6 +149,12 @@ async def score_case_llm(
             response["citation_accuracy"]["justification"] += (
                 f" PENALIZED: {missing_prov} sentence(s) missing from provenance_map."
             )
+            
+        # Deterministic overrides
+        from eval.scoring import score_tool_selection_efficiency, score_budget_compliance
+        response["tool_selection_efficiency"] = score_tool_selection_efficiency(events)
+        response["context_budget_compliance"] = score_budget_compliance(events)
+        
         return response
     except Exception as e:
         print(f"Error scoring case {case['case_id']}: {e}")

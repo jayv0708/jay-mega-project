@@ -1,31 +1,23 @@
 """Agent package for orchestration classes and prompt definitions."""
 
 from agents.base import BaseAgent
-from agents.manager import AgentManager
+from agents.llm import AnthropicClient
 from agents.standard_agents import (
-    OrchestratorAgent,
-    DecompositionAgent,
-    RAGAgent,
     CritiqueAgent,
+    DecompositionAgent,
+    OrchestratorAgent,
+    RAGAgent,
     SynthesisAgent,
-    RetrievalAgent,
     CompressionAgent,
-    VerificationAgent,
-    RefinementAgent,
-    MetaAgent,
 )
 
 __all__ = [
     "BaseAgent",
-    "AgentManager",
+    "AnthropicClient",
     "OrchestratorAgent",
     "DecompositionAgent",
     "RAGAgent",
     "CritiqueAgent",
     "SynthesisAgent",
-    "RetrievalAgent",
     "CompressionAgent",
-    "VerificationAgent",
-    "RefinementAgent",
-    "MetaAgent",
 ]

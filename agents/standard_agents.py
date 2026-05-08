@@ -380,3 +380,45 @@ class SynthesisAgent(BaseAgent):
         self.consume_budget(100)
         return context
 
+
+class CompressionAgent(BaseAgent):
+    def __init__(self, agent_id: str = "compression", max_context_budget: int = 1000) -> None:
+        super().__init__(agent_id, max_context_budget)
+        self.llm = AnthropicClient()
+
+    async def execute(self, context: SharedContext) -> SharedContext:
+        prompt = load_prompt_json("compression") if False else {"system": "You are the Compression agent. Preserve structured data exactly and summarize only free-text narrative filler."}
+        
+        # Build text representation of previous agent outputs to summarize
+        raw_narrative = "\n".join(
+            f"{agent}: {output.output}"
+            for agent, output in context.agent_outputs.items()
+            if agent != self.agent_id
+        )
+        
+        if not raw_narrative.strip():
+            return context
+
+        fallback_summary = f"Summary of {len(context.agent_outputs)} outputs."
+        
+        system_prompt = prompt.get("system", "Summarize narrative filler, preserve structured data.")
+        summary = await self.llm.complete_json(
+            system_prompt,
+            f"Please summarize the following agent narratives while strictly preserving citations and JSON structures:\n\n{raw_narrative}",
+            temperature=0.0,
+            max_tokens=500,
+            fallback={"summary": fallback_summary},
+        )
+        
+        output_text = summary.get("summary", fallback_summary)
+        
+        context.add_agent_output(
+            AgentOutput(
+                agent_id=self.agent_id,
+                output=output_text,
+                metadata={"original_length": len(raw_narrative), "compressed_length": len(output_text)}
+            )
+        )
+        self.consume_budget(50)
+        return context
+

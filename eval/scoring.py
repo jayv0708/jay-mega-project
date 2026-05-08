@@ -76,3 +76,35 @@ def validate_provenance_map(provenance_map: list[dict[str, Any]]) -> list[str]:
         if "chunk_id" not in entry:
             errors.append(f"Entry [{i}] missing 'chunk_id' key (may be null)")
     return errors
+
+def score_tool_selection_efficiency(events: list[dict[str, Any]], base_score: float = 1.0) -> dict[str, Any]:
+    """Score tool usage based on deterministic failure traces."""
+    failures = sum(1 for e in events if e.get("event_type") == "TOOL_FAILURE")
+    retries = sum(1 for e in events if e.get("event_type") == "TOOL_RETRY")
+    
+    penalty = (failures * 0.2) + (retries * 0.1)
+    score = max(0.0, base_score - penalty)
+    
+    justif = "Tool selection was optimal with no retries or failures."
+    if penalty > 0:
+        justif = f"Tool efficiency penalised by {penalty:.2f} due to {failures} failures and {retries} retries."
+        
+    return {"score": score, "justification": justif}
+
+def score_budget_compliance(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Score budget compliance strictly based on the presence of POLICY_VIOLATION events."""
+    violations = sum(
+        1 for e in events
+        if e.get("event_type") == "POLICY_VIOLATION" 
+        and e.get("data", {}).get("violation_type") == "context_budget_exceeded"
+    )
+    
+    if violations > 0:
+        return {
+            "score": 0.0, 
+            "justification": f"System critically failed budget compliance: {violations} context_budget_exceeded violation(s) recorded."
+        }
+    return {
+        "score": 1.0,
+        "justification": "System maintained strict context budget compliance with no overflows."
+    }
