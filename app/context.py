@@ -1,140 +1,208 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
+import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from uuid import uuid4
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy.orm import Session
 
-from db.models import AgentEvent
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class PolicyViolation(BaseModel):
     violation_type: str
     message: str
-    details: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    details: dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
-class ContextBudgetState(BaseModel):
-    total_tokens: int = Field(default=4096, ge=0)
+class BudgetState(BaseModel):
+    max_tokens: int = Field(default=4096, ge=0)
     used_tokens: int = Field(default=0, ge=0)
-    remaining_tokens: int = Field(default=4096, ge=0)
-    reserved_tokens: int = Field(default=0, ge=0)
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_updated: datetime = Field(default_factory=utc_now)
 
-    @model_validator(mode="before")
-    def normalize_remaining(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        total = values.get("total_tokens", 4096)
-        used = values.get("used_tokens", 0)
-        values["remaining_tokens"] = max(total - used, 0)
-        return values
-
-    def can_consume(self, amount: int) -> bool:
-        return amount <= self.remaining_tokens
+    @property
+    def remaining_tokens(self) -> int:
+        return max(self.max_tokens - self.used_tokens, 0)
 
     def consume(self, amount: int) -> None:
         if amount < 0:
             raise ValueError("Budget consumption amount must be non-negative")
-        if not self.can_consume(amount):
-            raise ValueError("Not enough budget remaining")
+        if amount > self.remaining_tokens:
+            raise ContextBudgetExceeded("Not enough budget remaining")
         self.used_tokens += amount
-        self.remaining_tokens = max(self.total_tokens - self.used_tokens, 0)
-        self.last_updated = datetime.utcnow()
+        self.last_updated = utc_now()
 
 
-class RetrievedChunk(BaseModel):
-    chunk_id: str
-    source: str
+class SubTask(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    type: str = "general"
+    description: str
+    dependencies: list[str] = Field(default_factory=list)
+    status: str = "pending"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def task_id(self) -> str:
+        return self.id
+
+    @property
+    def depends_on(self) -> list[str]:
+        return self.dependencies
+
+
+Subtask = SubTask
+
+
+class Chunk(BaseModel):
+    id: str
     text: str
-    relevance: float = 0.0
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    source_url: str
+    relevance_score: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def chunk_id(self) -> str:
+        return self.id
+
+    @property
+    def source(self) -> str:
+        return self.source_url
+
+    @property
+    def relevance(self) -> float:
+        return self.relevance_score
+
+
+RetrievedChunk = Chunk
 
 
 class ToolOutput(BaseModel):
     tool_name: str
-    input_payload: Dict[str, Any] = Field(default_factory=dict)
-    output_payload: Dict[str, Any] = Field(default_factory=dict)
-    latency_ms: Optional[int] = None
+    input_payload: dict[str, Any] = Field(default_factory=dict)
+    output_payload: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: int | None = None
     success: bool = False
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class AgentOutput(BaseModel):
     agent_id: str
     output: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class Citation(BaseModel):
-    source: str
-    text: str
-    start_index: Optional[int] = None
-    end_index: Optional[int] = None
-    confidence: Optional[float] = None
+    sentence: str = ""
+    chunk_id: str
+    agent_id: str
+    source_url: str | None = None
+    start_index: int | None = None
+    end_index: int | None = None
+    confidence: float | None = None
+
+    @property
+    def text(self) -> str:
+        return self.sentence
+
+    @property
+    def source(self) -> str | None:
+        return self.source_url
 
 
-class Subtask(BaseModel):
-    task_id: str = Field(default_factory=lambda: str(uuid4()))
-    description: str
-    status: str = Field(default="pending")
-    depends_on: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+class Contradiction(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    statement_a: str
+    agent_a: str
+    statement_b: str
+    agent_b: str
+    severity: str = "medium"
+    resolution: str | None = None
+    justification: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SharedContext(BaseModel):
-    context_id: str = Field(default_factory=lambda: str(uuid4()))
-    job_id: Optional[str] = None
+    job_id: UUID = Field(default_factory=uuid4)
     query: str
-    subtasks: List[Subtask] = Field(default_factory=list)
-    retrieved_chunks: List[RetrievedChunk] = Field(default_factory=list)
-    tool_outputs: List[ToolOutput] = Field(default_factory=list)
-    agent_outputs: List[AgentOutput] = Field(default_factory=list)
-    citations: List[Citation] = Field(default_factory=list)
-    budget_state: ContextBudgetState = Field(default_factory=ContextBudgetState)
-    policy_violations: List[PolicyViolation] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    subtasks: list[SubTask] = Field(default_factory=list)
+    retrieved_chunks: list[Chunk] = Field(default_factory=list)
+    tool_outputs: list[ToolOutput] = Field(default_factory=list)
+    agent_outputs: dict[str, AgentOutput] = Field(default_factory=dict)
+    citations: list[Citation] = Field(default_factory=list)
+    budget_state: dict[str, BudgetState] = Field(default_factory=dict)
+    policy_violations: list[PolicyViolation] = Field(default_factory=list)
+    contradictions: list[Contradiction] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_job_id(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if values.get("job_id") is None:
+            values.pop("job_id", None)
+        return values
+
+    def touch(self) -> None:
+        self.updated_at = utc_now()
 
     def add_tool_output(self, tool_output: ToolOutput) -> None:
         self.tool_outputs.append(tool_output)
         self.touch()
 
     def add_agent_output(self, agent_output: AgentOutput) -> None:
-        self.agent_outputs.append(agent_output)
+        self.agent_outputs[agent_output.agent_id] = agent_output
+        self.touch()
+
+    def add_contradiction(self, contradiction: Contradiction) -> None:
+        self.contradictions.append(contradiction)
         self.touch()
 
     def add_policy_violation(
         self,
         violation: PolicyViolation,
         persist: bool = False,
-        db_session: Optional[Session] = None,
+        db_session: "AsyncSession | None" = None,
     ) -> None:
         self.policy_violations.append(violation)
         self.touch()
-        if persist and db_session is not None and self.job_id is not None:
+        if persist and db_session is not None:
             self._persist_policy_violation(db_session, violation)
 
-    def touch(self) -> None:
-        self.updated_at = datetime.now(timezone.utc)
+    def _persist_policy_violation(self, db_session: "AsyncSession", violation: PolicyViolation) -> None:
+        from db.models import AgentEvent
 
-    def _persist_policy_violation(self, db_session: Session, violation: PolicyViolation) -> None:
         event = AgentEvent(
             job_id=self.job_id,
             agent_id="budget-manager",
             event_type="POLICY_VIOLATION",
-            payload=violation.model_dump(),
-            input_hash=None,
-            output_hash=None,
-            latency_ms=None,
-            token_count=None,
-            policy_violations=[violation.model_dump()],
+            policy_violation=True,
+            payload=violation.model_dump(mode="json"),
         )
         db_session.add(event)
-        db_session.commit()
+        commit_result = db_session.commit()
+        if inspect.isawaitable(commit_result):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(commit_result)
+            else:
+                loop.create_task(commit_result)
+
+    def get_agent_budget_state(self, agent_id: str, max_tokens: int = 4096) -> BudgetState:
+        if agent_id not in self.budget_state:
+            self.budget_state[agent_id] = BudgetState(max_tokens=max_tokens)
+        return self.budget_state[agent_id]
 
 
 class ContextBudgetExceeded(Exception):
@@ -146,58 +214,85 @@ class ContextBudgetManager:
         self,
         shared_context: SharedContext,
         total_tokens: int = 4096,
-        per_agent_limits: Optional[Dict[str, int]] = None,
-        db_session: Optional[Session] = None,
+        per_agent_limits: dict[str, int] | None = None,
+        db_session: "AsyncSession | None" = None,
     ) -> None:
         self.shared_context = shared_context
         self.db_session = db_session
+        self.total_tokens = total_tokens
         self.per_agent_limits = per_agent_limits or {}
-        self.agent_usage: Dict[str, int] = {}
-        self.shared_context.budget_state.total_tokens = total_tokens
-        self.shared_context.budget_state.remaining_tokens = max(
-            total_tokens - self.shared_context.budget_state.used_tokens, 0
-        )
+        self.shared_context.get_agent_budget_state("shared", total_tokens)
 
-    def check_remaining(self, agent_id: str, token_cost: int = 1) -> bool:
+    def register_agent(self, agent_id: str, max_context_budget: int) -> None:
+        limit = self.per_agent_limits.get(agent_id, max_context_budget)
+        self.shared_context.get_agent_budget_state(agent_id, limit).max_tokens = limit
+
+    def check_remaining(self, agent_id: str, token_cost: int = 0) -> int | bool:
+        state = self.shared_context.get_agent_budget_state(
+            agent_id,
+            self.per_agent_limits.get(agent_id, self.total_tokens),
+        )
         if token_cost < 0:
             raise ValueError("Token cost must be non-negative")
-
-        agent_used = self.agent_usage.get(agent_id, 0)
-        agent_limit = self.per_agent_limits.get(agent_id, self.shared_context.budget_state.total_tokens)
-
-        if token_cost > self.shared_context.budget_state.remaining_tokens:
-            violation = PolicyViolation(
-                violation_type="BUDGET_OVERFLOW",
-                message=f"Agent '{agent_id}' exceeded the shared context budget.",
-                details={
-                    "requested_tokens": token_cost,
-                    "remaining_tokens": self.shared_context.budget_state.remaining_tokens,
-                },
-            )
-            self.shared_context.add_policy_violation(
-                violation, persist=True, db_session=self.db_session
-            )
-            raise ContextBudgetExceeded(violation.message)
-
-        if agent_used + token_cost > agent_limit:
-            violation = PolicyViolation(
-                violation_type="AGENT_BUDGET_OVERFLOW",
-                message=f"Agent '{agent_id}' exceeded its configured budget limit.",
-                details={
-                    "agent_used": agent_used,
-                    "agent_limit": agent_limit,
-                    "requested_tokens": token_cost,
-                },
-            )
-            self.shared_context.add_policy_violation(
-                violation, persist=True, db_session=self.db_session
-            )
-            raise ContextBudgetExceeded(violation.message)
-
-        return True
+        if token_cost and token_cost > state.remaining_tokens:
+            self._handle_over_budget(agent_id, token_cost, state.remaining_tokens)
+            return False
+        return state.remaining_tokens if token_cost == 0 else True
 
     def consume(self, agent_id: str, token_cost: int = 1) -> None:
-        self.check_remaining(agent_id, token_cost)
-        self.agent_usage[agent_id] = self.agent_usage.get(agent_id, 0) + token_cost
-        self.shared_context.budget_state.consume(token_cost)
+        state = self.shared_context.get_agent_budget_state(
+            agent_id,
+            self.per_agent_limits.get(agent_id, self.total_tokens),
+        )
+        shared = self.shared_context.get_agent_budget_state("shared", self.total_tokens)
+        if token_cost > state.remaining_tokens or token_cost > shared.remaining_tokens:
+            self._handle_over_budget(agent_id, token_cost, min(state.remaining_tokens, shared.remaining_tokens))
+            return
+        state.consume(token_cost)
+        shared.consume(token_cost)
         self.shared_context.touch()
+
+    def ensure_can_add(self, agent_id: str, payload: Any) -> bool:
+        token_cost = self.estimate_tokens(payload)
+        if self.check_remaining(agent_id, token_cost=token_cost) is True:
+            return True
+        return False
+
+    def estimate_tokens(self, payload: Any) -> int:
+        serialized = json.dumps(payload, default=str, sort_keys=True)
+        return max(1, len(serialized) // 4)
+
+    def _handle_over_budget(self, agent_id: str, requested_tokens: int, remaining_tokens: int) -> None:
+        self.compress_context(agent_id)
+        state = self.shared_context.get_agent_budget_state(agent_id)
+        shared = self.shared_context.get_agent_budget_state("shared")
+        if requested_tokens <= min(state.remaining_tokens, shared.remaining_tokens):
+            return
+        violation = PolicyViolation(
+            violation_type="CONTEXT_BUDGET_EXCEEDED",
+            message=f"Agent '{agent_id}' attempted to add context beyond its budget.",
+            details={
+                "requested_tokens": requested_tokens,
+                "remaining_tokens_before_compression": remaining_tokens,
+                "remaining_tokens_after_compression": min(state.remaining_tokens, shared.remaining_tokens),
+            },
+        )
+        self.shared_context.add_policy_violation(violation, persist=True, db_session=self.db_session)
+        raise ContextBudgetExceeded(violation.message)
+
+    def compress_context(self, triggering_agent_id: str) -> SharedContext:
+        """Lossless for structured fields, lossy only for narrative agent outputs."""
+        for agent_id, output in list(self.shared_context.agent_outputs.items()):
+            if len(output.output) <= 320:
+                continue
+            compressed = output.output[:280].rstrip() + " ... [compressed narrative]"
+            self.shared_context.agent_outputs[agent_id] = output.model_copy(update={"output": compressed})
+        self.shared_context.metadata.setdefault("compression_events", []).append(
+            {
+                "triggering_agent_id": triggering_agent_id,
+                "timestamp": utc_now().isoformat(),
+                "mode": "lossless_structured_lossy_narrative",
+            }
+        )
+        self.shared_context.touch()
+        return self.shared_context

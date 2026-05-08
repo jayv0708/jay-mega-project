@@ -10,8 +10,8 @@ def test_context_budget_consumption_passes_when_within_limit():
     assert budget_manager.check_remaining("agent_a", token_cost=3)
     budget_manager.consume("agent_a", token_cost=3)
 
-    assert context.budget_state.used_tokens == 3
-    assert context.budget_state.remaining_tokens == 7
+    assert context.budget_state["shared"].used_tokens == 3
+    assert context.budget_state["shared"].remaining_tokens == 7
     assert context.policy_violations == []
 
 
@@ -24,7 +24,7 @@ def test_context_budget_consumption_fails_when_over_capacity():
         budget_manager.consume("agent_a", token_cost=3)
 
     assert len(context.policy_violations) == 1
-    assert context.policy_violations[0].violation_type == "BUDGET_OVERFLOW"
+    assert context.policy_violations[0].violation_type == "CONTEXT_BUDGET_EXCEEDED"
 
 
 def test_agent_specific_limit_is_enforced():
@@ -40,4 +40,4 @@ def test_agent_specific_limit_is_enforced():
         budget_manager.consume("agent_a", token_cost=1)
 
     assert len(context.policy_violations) == 1
-    assert context.policy_violations[0].violation_type == "AGENT_BUDGET_OVERFLOW"
+    assert context.policy_violations[0].violation_type == "CONTEXT_BUDGET_EXCEEDED"
