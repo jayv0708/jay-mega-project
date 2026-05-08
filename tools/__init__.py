@@ -1,18 +1,24 @@
-"""Tool package for agent-executable tools."""
+"""Tool package for agent-executable tools.
+
+Lazy imports — do not eagerly load all tools at module level to avoid
+dragging in heavy ML/Docker dependencies during unit test collection.
+"""
 
 from tools.base import BaseTool, ToolResult
-from tools.code_sandbox import CodeSandboxTool
-from tools.nl_to_sql import NLToSQLTool
-from tools.orchestrator import ToolOrchestrator
-from tools.self_reflection import SelfReflectionTool
-from tools.web_search import WebSearchTool
+from tools.security import (
+    inspect_tool_input,
+    inspect_retrieval_chunk,
+    sanitize_text,
+    SecurityViolation,
+    InspectionResult,
+)
 
 __all__ = [
     "BaseTool",
     "ToolResult",
-    "CodeSandboxTool",
-    "NLToSQLTool",
-    "ToolOrchestrator",
-    "SelfReflectionTool",
-    "WebSearchTool",
+    "inspect_tool_input",
+    "inspect_retrieval_chunk",
+    "sanitize_text",
+    "SecurityViolation",
+    "InspectionResult",
 ]

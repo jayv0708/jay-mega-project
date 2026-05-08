@@ -11,7 +11,7 @@ from app.events import EventLogger, SSEEvent
 from agents.standard_agents import CritiqueAgent, DecompositionAgent, OrchestratorAgent, RAGAgent, SynthesisAgent
 from retrieval.retrieval import RetrievalService
 from retrieval.embedding import EmbeddingService
-from queue.broker import JobBroker
+from job_queue.broker import JobBroker
 from db.db import get_async_session
 from db.models import Job, JobStatus
 

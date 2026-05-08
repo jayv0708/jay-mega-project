@@ -29,8 +29,21 @@ class BaseTool(ABC):
         """Execute the tool with given input and return a result."""
         raise NotImplementedError
 
-    async def _execute_with_tracking(self, input_data: Dict[str, Any]) -> tuple[ToolResult, int]:
-        """Execute tool with tracking and return result plus latency."""
+    async def _execute_with_tracking(
+        self, input_data: Dict[str, Any], job_id: str | None = None
+    ) -> tuple[ToolResult, int]:
+        """Execute tool with security inspection, latency tracking, and audit logging."""
+        from tools.security import inspect_tool_input
+
+        inspection = inspect_tool_input(self.tool_name, input_data, job_id=job_id)
+        if not inspection.safe:
+            return ToolResult(
+                success=False,
+                output={"violations": [v.__dict__ for v in inspection.violations]},
+                error_code="SECURITY_VIOLATION",
+                message=f"Input blocked by security policy: {inspection.violations[0].kind}",
+            ), 0
+
         start_time = time.time()
         self.execution_count += 1
 
@@ -46,7 +59,7 @@ class BaseTool(ABC):
                 success=False,
                 output={},
                 error_code="EXECUTION_ERROR",
-                message=str(e)
+                message=str(e),
             ), latency_ms
 
     def to_tool_output(self, result: ToolResult, latency_ms: int, input_data: Dict[str, Any]) -> ToolOutput:

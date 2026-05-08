@@ -164,6 +164,17 @@ class RAGAgent(BaseAgent):
             # If no chunks found, fall back to mock data
             return await self._execute_mock_retrieval(context)
 
+        # --- Retrieval poisoning defence ---
+        from tools.security import inspect_retrieval_chunk
+        safe_chunks = []
+        for chunk in chunks:
+            result = inspect_retrieval_chunk(chunk.text, chunk.id, job_id=str(context.job_id))
+            if result.safe:
+                safe_chunks.append(chunk)
+        chunks = safe_chunks
+        if not chunks:
+            return await self._execute_mock_retrieval(context)
+
         self.check_can_add([chunk.model_dump() for chunk in chunks])
         existing = {chunk.id for chunk in context.retrieved_chunks}
         context.retrieved_chunks.extend(chunk for chunk in chunks if chunk.id not in existing)
