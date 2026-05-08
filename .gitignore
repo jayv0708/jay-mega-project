@@ -8,3 +8,5 @@ db_data/
 *.egg-info/
 .dist-info/
 .env
+eval/latest_eval.json
+eval/prompt_rewrites.json
