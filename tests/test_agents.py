@@ -7,6 +7,11 @@ from agents import (
     CompressionAgent,
     VerificationAgent,
     RefinementAgent,
+    OrchestratorAgent,
+    DecompositionAgent,
+    RAGAgent,
+    CritiqueAgent,
+    SynthesisAgent,
 )
 
 
@@ -92,3 +97,19 @@ async def test_agent_execution_statistics():
     assert stats["execution_count"] == 2
     assert stats["total_latency_ms"] >= 0  # May be 0 for fast tests
     assert stats["avg_latency_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_required_agents_produce_routed_cited_synthesis():
+    context = SharedContext(query="Explain the system briefly")
+    budget_manager = ContextBudgetManager(context, total_tokens=10000)
+
+    for agent in [OrchestratorAgent(), DecompositionAgent(), RAGAgent(), CritiqueAgent(), SynthesisAgent()]:
+        context = await agent._execute_with_tracking(context, budget_manager)
+
+    assert "routing_decision" in context.metadata
+    assert len(context.subtasks) >= 3
+    assert len(context.retrieved_chunks) >= 2
+    assert len(context.citations) >= 2
+    assert "claim_scores" in context.agent_outputs["critique"].metadata
+    assert "provenance_map" in context.agent_outputs["synthesis"].metadata

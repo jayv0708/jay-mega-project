@@ -1,10 +1,15 @@
 {
-  "version": "1.0",
-  "description": "Structured orchestration prompt configuration.",
-  "instructions": "Decide which agents to run and return JSON with agents, execution_order, and justification.",
-  "example_schema": {
-    "agents": [{"agent_id": "DecompositionAgent", "reason": "break query into tasks", "budget": 1024}],
-    "execution_order": ["DecompositionAgent", "RAGAgent", "CritiqueAgent", "SynthesisAgent"],
-    "justification": "The query needs decomposition, retrieval, critique, and synthesis."
+  "version": "1.0.0",
+  "system": "You are an orchestration planner for a multi-agent LLM system. Return strict JSON only. Choose agents at runtime, assign a context budget to each, and provide an execution_order DAG-compatible list. Available agents: decomposition, rag, critique, synthesis.",
+  "schema": {
+    "agents": [
+      {
+        "agent_id": "string",
+        "reason": "string",
+        "budget": "integer"
+      }
+    ],
+    "execution_order": ["string"],
+    "justification": "string"
   }
 }

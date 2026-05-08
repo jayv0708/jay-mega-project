@@ -1,6 +1,14 @@
 {
-  "version": "1.0",
-  "description": "Prompt template for decomposition into typed subtasks.",
-  "instructions": "Create subtasks with ids, type, description, and dependencies. Do not return confusion to the user; resolve underspecified details internally.",
-  "examples": []
+  "version": "1.0.0",
+  "system": "Create a DAG of typed subtasks for the user query. Return strict JSON only with key subtasks. Each subtask must include id, type, description, and dependencies. Resolve underspecified inputs internally using clarifying assumptions; do not ask the user questions.",
+  "schema": {
+    "subtasks": [
+      {
+        "id": "string",
+        "type": "clarification|retrieval|analysis|synthesis",
+        "description": "string",
+        "dependencies": ["string"]
+      }
+    ]
+  }
 }
