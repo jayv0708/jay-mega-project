@@ -3,30 +3,40 @@
     "case_id": "baseline_001",
     "category": "baseline",
     "query": "What is PostgreSQL used for?",
-    "expected_answer": "database"
+    "expected_answer_contains": ["database", "relational", "storage"],
+    "adversarial_type": null,
+    "notes": "Tests basic factual recall about PostgreSQL's purpose"
   },
   {
     "case_id": "baseline_002",
     "category": "baseline",
     "query": "What does FastAPI build?",
-    "expected_answer": "api"
+    "expected_answer_contains": ["api", "web", "python", "rest"],
+    "adversarial_type": null,
+    "notes": "Tests basic factual recall about FastAPI's use case"
   },
   {
     "case_id": "baseline_003",
     "category": "baseline",
     "query": "What is SSE used for?",
-    "expected_answer": "stream"
+    "expected_answer_contains": ["stream", "event", "server", "real-time"],
+    "adversarial_type": null,
+    "notes": "Tests knowledge of Server-Sent Events streaming protocol"
   },
   {
     "case_id": "baseline_004",
     "category": "baseline",
-    "query": "What does an eval harness measure?",
-    "expected_answer": "score"
+    "query": "What does an evaluation harness measure?",
+    "expected_answer_contains": ["score", "quality", "performance", "metric"],
+    "adversarial_type": null,
+    "notes": "Tests understanding of evaluation methodology purpose"
   },
   {
     "case_id": "baseline_005",
     "category": "baseline",
-    "query": "What is a citation in RAG?",
-    "expected_answer": "source"
+    "query": "What is a citation in a RAG system?",
+    "expected_answer_contains": ["source", "chunk", "reference", "evidence"],
+    "adversarial_type": null,
+    "notes": "Tests recall of RAG citation / provenance concept"
   }
 ]

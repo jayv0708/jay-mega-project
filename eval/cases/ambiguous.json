@@ -3,30 +3,40 @@
     "case_id": "ambiguous_001",
     "category": "ambiguous",
     "query": "Tell me about the project.",
-    "expected_answer": "decomposition"
+    "expected_answer_contains": ["decomposition", "plan", "subtask"],
+    "adversarial_type": null,
+    "notes": "Underspecified query — tests decomposition agent's ability to clarify and structure tasks"
   },
   {
     "case_id": "ambiguous_002",
     "category": "ambiguous",
     "query": "Compare the options.",
-    "expected_answer": "subtasks"
+    "expected_answer_contains": ["subtask", "option", "comparison"],
+    "adversarial_type": null,
+    "notes": "No context provided — tests how orchestrator handles missing object reference"
   },
   {
     "case_id": "ambiguous_003",
     "category": "ambiguous",
     "query": "Make it better.",
-    "expected_answer": "clarification"
+    "expected_answer_contains": ["clarification", "improve", "context"],
+    "adversarial_type": null,
+    "notes": "Pronoun without antecedent — tests graceful clarification request"
   },
   {
     "case_id": "ambiguous_004",
     "category": "ambiguous",
     "query": "Analyze this.",
-    "expected_answer": "dependencies"
+    "expected_answer_contains": ["dependency", "analysis", "context"],
+    "adversarial_type": null,
+    "notes": "Minimal query without subject — tests DAG planner dependency resolution under ambiguity"
   },
   {
     "case_id": "ambiguous_005",
     "category": "ambiguous",
     "query": "What should we do next?",
-    "expected_answer": "plan"
+    "expected_answer_contains": ["plan", "step", "next"],
+    "adversarial_type": null,
+    "notes": "Stateful question with no prior context — tests handling of long-context underspecification"
   }
 ]
