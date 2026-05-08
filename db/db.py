@@ -1,16 +1,22 @@
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@db:5432/appdb")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL must be set in the environment.")
 
-engine = create_engine(DATABASE_URL, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL,
+    future=True,
+    echo=False,
+    pool_pre_ping=True,
+)
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
 
-def get_engine():
-    return engine
-
-
-def get_session():
-    return SessionLocal()
+def get_async_session() -> AsyncSession:
+    return AsyncSessionLocal()
