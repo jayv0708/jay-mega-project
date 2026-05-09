@@ -251,6 +251,41 @@ Every agent declares a `max_context_budget`. The `ContextBudgetManager`:
 
 ---
 
+## What I Would Build Next
+
+Given more time, here is what I would prioritise in order:
+
+1. **Per-token streaming via Anthropic stream API** — Switch every agent from 
+   `client.messages.create()` to `client.messages.stream()` and pipe each token 
+   directly into the SSE queue as it arrives. This is the single highest-value 
+   upgrade for user experience.
+
+2. **PostgreSQL-backed prompt rewrite store** — Replace the current JSON-file 
+   approval store with a proper `prompt_rewrites` table so every proposed rewrite, 
+   approval decision, and performance delta is queryable via SQL and the 
+   `/rewrites/{rewrite_id}/decision` endpoint works end-to-end against the database.
+
+3. **Live web search via Brave Search API** — Wire `WebSearchTool` to a real search 
+   API instead of fixtures. The tool interface is already correct — only the 
+   transport layer needs replacing.
+
+4. **Separate worker process with horizontal scaling** — Extract `DAGExecutor` from 
+   the API process into a standalone worker container. The `SKIP LOCKED` job queue 
+   already supports N workers safely — this is purely a deployment change.
+
+5. **OpenTelemetry export to Jaeger** — Add an OTLP exporter so `trace_id` and 
+   `span_id` on every SSE event render as visual flame graphs in Jaeger UI rather 
+   than being log-only.
+
+6. **HNSW index upgrade** — Replace the IVFFlat pgvector index with HNSW for 
+   sub-10ms retrieval at scale without requiring periodic `VACUUM` + re-indexing.
+
+7. **Multi-tenant job isolation** — Add a `tenant_id` column to `jobs`, `job_steps`, 
+   and `agent_events` with row-level security policies so the system can safely serve 
+   multiple users without cross-contamination.
+
+---
+
 ## Development
 
 ```bash
