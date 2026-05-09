@@ -247,7 +247,6 @@ Every agent declares a `max_context_budget`. The `ContextBudgetManager`:
 - Real-time web crawling or knowledge base ingestion pipelines
 - Multi-tenant job isolation (all jobs share a single DB)
 - Model fine-tuning or RLHF
-- Streaming token-by-token LLM output (events are per-agent, not per-token)
 - Distributed tracing UI (OpenTelemetry export to Jaeger/Tempo is a roadmap item)
 
 ---
