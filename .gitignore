@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pyc
 *.pyo
 *.env
 *.sqlite3
@@ -11,3 +12,9 @@ db_data/
 eval/latest_eval.json
 eval/prompt_rewrites.json
 .pytest_cache/
+.mypy_cache/
+dist/
+build/
+.venv/
+venv/
+.DS_Store
